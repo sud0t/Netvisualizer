@@ -40,6 +40,7 @@ async def hello_run():
 
 # My own implementation of an asynchronous ping sweep
 async def async_ping_sweep(addr, prefix_length, count="1"):
+    # TODO: Return values other than just active hosts
     if os.name == "nt":
         count_arg = "-n"
     elif os.name == "posix":
@@ -47,9 +48,9 @@ async def async_ping_sweep(addr, prefix_length, count="1"):
     else:
         count_arg = "-c"
 
-    async def async_ping(addr: str):
+    async def async_ping(addr: str) -> tuple:
         print(f"pinging {addr}")
-        proc = await asyncio.create_subprocess_exec(  # await a ping subprocess
+        proc = await asyncio.create_subprocess_exec(  # Await a ping subprocess
             "ping", 
             count_arg,
             count,
@@ -57,7 +58,7 @@ async def async_ping_sweep(addr, prefix_length, count="1"):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        return await proc.communicate()
+        return await proc.communicate() # Returns tuple with 2 bytes objects
 
     possible_hosts = list(ip_network(f"{addr}/{prefix_length}", strict=False).hosts())
     task_list = []
@@ -66,12 +67,12 @@ async def async_ping_sweep(addr, prefix_length, count="1"):
     )
     active_hosts = []
     for host in possible_hosts:
-        task = asyncio.create_task(async_ping(str(host)))  # Making a task for each ping in the given network
-        task_list.append(task)  # Adding all the tasks to a list so they can be gathered
+        task = asyncio.create_task(async_ping(str(host)))  # Making a coroutine for each ping in the given network
+        task_list.append(task)  # Adding all the tasks to a list so they can be gathered and awaited
 
-    gather_list = await asyncio.gather(*task_list)  # Gathering the tasks by unpacking task_list into asyncio.gather()
-    for index, tup in enumerate(gather_list):  # communicate returns a tuple hence the name tup, need the index to add correct IP address to active_hosts list
-        response = tup[0].decode()
+    gather_list = await asyncio.gather(*task_list)  # Gathering the coroutine by unpacking task_list into asyncio.gather()
+    for index, tup in enumerate(gather_list):  # proc.communicate() returns a tuple with the first index being the response
+        response = tup[0].decode() 
         if bool(re.search(active_match, response)):
             print(response)
             active_hosts.append(possible_hosts[index])
