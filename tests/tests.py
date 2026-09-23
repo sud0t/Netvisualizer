@@ -3,14 +3,14 @@
 import asyncio
 import os
 import re
+import socket
+import subprocess
 from ipaddress import ip_network
 from random import randint
 
 
 def main():
-    local = "127.0.0.1"
     ip = "207.81.215.6"
-    google = "8.8.8.8"
     asyncio.run(async_ping_sweep(ip, 24))
 
 
@@ -78,6 +78,44 @@ async def async_ping_sweep(addr, prefix_length, count="1"):
 
     return active_hosts
 
+
+def get_local_ip():
+    # Source - https://stackoverflow.com/a/28950776
+    # Retrieved 2026-09-21, License - CC BY-SA 4.0
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(0)
+    try:
+        # doesn't even have to be reachable
+        s.connect(('10.254.254.254', 1))
+        IP = s.getsockname()[0]
+    except Exception:  # noqa: BLE001
+        IP = '127.0.0.1'
+    finally:
+        s.close()
+    return IP
+
+
+def ping(addr: str, count="1") -> bool:
+    if os.name == "nt":
+        ping_arg = "-n"
+    elif os.name == "posix":
+        ping_arg = "-c"
+    try:
+        output = subprocess.check_output(["ping", ping_arg, count, addr])
+        print(output.decode())
+        return True
+    except subprocess.CalledProcessError:
+        print(f"Could not ping {addr}")
+        return False
+
+
+def ping_sweep(addr: str, prefix_length: int):
+    usable_hosts = list(ip_network(f'{addr}/{prefix_length}', strict=False).hosts())
+    active_hosts = []
+    for host in usable_hosts:
+        if ping(str(host)):
+            active_hosts.append(str(host))
+    return active_hosts
 
 if __name__ == "__main__":
     main()
