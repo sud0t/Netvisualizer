@@ -6,13 +6,10 @@
 # import os
 # import asyncio
 
-# TODO: Maybe use scapy instead of crafting network scanner from scratch
 
 
-def main():
-    pass
 
-class Netscan:
+class scanner:
     """
     requires an IP address to function.
     """
@@ -35,7 +32,3 @@ class Netscan:
         user to select a scan of just the common open
         ports.
         """
-
-
-if __name__ == "__main__":
-    main()
