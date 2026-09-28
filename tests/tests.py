@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 import asyncio
 import os
 import re
@@ -11,7 +10,7 @@ from random import randint
 
 def main():
     ip = "207.81.215.6"
-    asyncio.run(async_ping_sweep(ip, 24))
+    asyncio.run(async_ping_sweep("10.0.0.0", 24))
 
 
 # asyncio.create_task() will schedule a coro to run on the event loop

@@ -8,6 +8,7 @@ from ipaddress import ip_address, ip_network
 # WARNING: Should depracate this file in favour of
 # putting the functions into netmapper.py's class
 
+
 def get_local_ip():
     # Source - https://stackoverflow.com/a/28950776
     # Retrieved 2026-09-21, License - CC BY-SA 4.0
@@ -15,10 +16,10 @@ def get_local_ip():
     s.settimeout(0)
     try:
         # doesn't even have to be reachable
-        s.connect(('10.254.254.254', 1))
+        s.connect(("10.254.254.254", 1))
         IP = s.getsockname()[0]
     except Exception:  # noqa: BLE001
-        IP = '127.0.0.1'
+        IP = "127.0.0.1"
     finally:
         s.close()
     return IP
@@ -39,7 +40,7 @@ def ping(addr: str, count="1") -> bool:
 
 
 def ping_sweep(addr: str, prefix_length: int):
-    usable_hosts = list(ip_network(f'{addr}/{prefix_length}', strict=False).hosts())
+    usable_hosts = list(ip_network(f"{addr}/{prefix_length}", strict=False).hosts())
     active_hosts = []
     for host in usable_hosts:
         if ping(str(host)):
@@ -50,39 +51,55 @@ def ping_sweep(addr: str, prefix_length: int):
 async def async_ping_sweep(addr, prefix_length, count="1"):
     # TODO: Return values other than just active hosts
     if os.name == "nt":
-        count_arg = "-n"
+        ping_count_arg = "-n"
     elif os.name == "posix":
-        count_arg = "-c"
+        ping_count_arg = "-c"
     else:
-        count_arg = "-c"
+        ping_count_arg = "-c"
+
 
     async def async_ping(addr: str) -> tuple:
         print(f"pinging {addr}")
         proc = await asyncio.create_subprocess_exec(  # Await ping process response
-            "ping", 
-            count_arg,
+            "ping",
+            ping_count_arg,
             count,
             addr,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        return await proc.communicate() # Returns tuple with 2 bytes objects
+        return await proc.communicate()  # Returns tuple with 2 bytes objects
 
     possible_hosts = list(ip_network(f"{addr}/{prefix_length}", strict=False).hosts())
     task_list = []
     for host in possible_hosts:
-        task = asyncio.create_task(async_ping(str(host)))  # Making a task for each ping in the given network
-        task_list.append(task)  # Adding all the tasks to a list so they can be gathered and awaited
+        task = asyncio.create_task(
+            async_ping(str(host))
+        )  # Making a task for each ping in the given network
+        task_list.append(
+            task
+        )  # Adding all the tasks to a list so they can be gathered and awaited
 
     active_match = (
         r"[1-9]\d* received"  # Match for packets received > 0 in the ping output
     )
     active_hosts = []
-    response_list = await asyncio.gather(*task_list)  # Gathering the coroutine by unpacking task_list into response_list
-    for index, tup in enumerate(response_list):  # proc.communicate() returns a tuple with the first index being the response
-        response = tup[0].decode() 
+    response_list = await asyncio.gather(
+        *task_list
+    )  # Gathering the coroutine by unpacking task_list into response_list
+    for index, tup in enumerate(
+        response_list
+    ):  # proc.communicate() returns a tuple with the first index being the response
+        response = tup[0].decode()
         if bool(re.search(active_match, response)):
             print(response)
-            active_hosts.append(possible_hosts[index]) # Append every host that responded to a list
+            active_hosts.append(
+                possible_hosts[index]
+            )  # Append every host that responded to a list
 
     return active_hosts
+
+
+# async def async_traceroute():
+#     asyncio.create_subprocess_exec("")
+#     pass

@@ -5,8 +5,10 @@
 # import subprocess
 # import os
 # import asyncio
+import asyncio
+import netutils
 
-
+# One button to start the scanner and send all requests
 
 
 class scanner:
@@ -17,11 +19,12 @@ class scanner:
         self.addr = addr
 
 
-    def enumerate_hosts(self, prefix_length, ping=True):
+    def host_enum(self, prefix_length, L3=True, L2=True):
         """
-        Functions to enumerate active hosts
-        on a given network
+        enumerate active hosts on a given network
         """
+        if L3:
+            asyncio.run(netutils.async_ping_sweep(self.addr, prefix_length))
 
 
     def port_scan(self, ports: range,):
@@ -32,3 +35,6 @@ class scanner:
         user to select a scan of just the common open
         ports.
         """
+
+local_scan = scanner(netutils.get_local_ip())
+local_scan.host_enum(24)
