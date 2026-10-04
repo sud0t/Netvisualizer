@@ -3,6 +3,7 @@ import os
 import re
 import socket
 import subprocess
+import scapy
 from ipaddress import ip_address, ip_network
 
 # WARNING: Should depracate this file in favour of
