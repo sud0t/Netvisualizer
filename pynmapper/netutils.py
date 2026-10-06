@@ -2,7 +2,6 @@
 
 import asyncio
 import os
-import re
 import socket
 import subprocess
 from ipaddress import ip_address, ip_network
@@ -10,9 +9,18 @@ from ipaddress import ip_address, ip_network
 
 def main():
     try:
-        asyncio.run(async_ping_sweep(get_local_ip(), 18, task_count=508))
+        asyncio.run(async_ping_sweep(get_local_ip(), 24, task_count=508))
     except Exception as e:
         print(f"error: {e}")
+
+# Use the correct ping argument based off OS
+if os.name == "nt":
+    ping_count_arg = "-n"
+elif os.name == "posix":
+    ping_count_arg = "-c"
+else:
+    ping_count_arg = "-c"
+
 
 def get_local_ip():
     # Source - https://stackoverflow.com/a/28950776
@@ -30,22 +38,32 @@ def get_local_ip():
     return IP
 
 
-def ping(addr: str, count="1") -> bool:
-    if os.name == "nt":
-        ping_arg = "-n"
-    elif os.name == "posix":
-        ping_arg = "-c"
+def ping(ip_addr: str, count="1") -> bool:
     try:
-        output = subprocess.check_output(["ping", ping_arg, count, addr])
+        output = subprocess.check_output(["ping", ping_count_arg, count, ip_addr])
         print(output.decode())
         return True
     except subprocess.CalledProcessError:
-        print(f"Could not ping {addr}")
+        print(f"Could not ping {ip_addr}")
         return False
 
 
-def ping_sweep(addr: str, prefix_length: int):
-    usable_hosts = list(ip_network(f"{addr}/{prefix_length}", strict=False).hosts())
+async def async_ping(ip_addr: str, semaphore: asyncio.Semaphore, count="1" ) -> tuple:
+        async with semaphore:
+            print(f"pinging {ip_addr}")
+            proc = await asyncio.create_subprocess_exec(  # Await ping process response
+                "ping",
+                ping_count_arg,
+                count,
+                ip_addr,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            return await proc.communicate()
+
+
+def ping_sweep(ip_addr: str, prefix_length: int):
+    usable_hosts = list(ip_network(f"{ip_addr}/{prefix_length}", strict=False).hosts())
     active_hosts = []
     for host in usable_hosts:
         if ping(str(host)):
@@ -53,35 +71,10 @@ def ping_sweep(addr: str, prefix_length: int):
     return active_hosts
 
 
-async def async_ping_sweep(addr, prefix_length, count="1", task_count=254):
-    # Use the correct ping argument based off OS
-    if os.name == "nt":
-        ping_count_arg = "-n"
-    elif os.name == "posix":
-        ping_count_arg = "-c"
-    else:
-        ping_count_arg = "-c"
-
+async def async_ping_sweep(ip_addr, prefix_length, count="1", task_count=254):
     semaphore = asyncio.Semaphore(task_count)
-    async def async_ping(addr: str, semaphore) -> tuple:
-        async with semaphore:
-            print(f"pinging {addr}")
-            proc = await asyncio.create_subprocess_exec(  # Await ping process response
-                "ping",
-                ping_count_arg,
-                count,
-                addr,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            return await proc.communicate()  # Returns tuple with 2 bytes objects
-
-
-    possible_hosts = list(ip_network(f"{addr}/{prefix_length}", strict=False).hosts())
+    possible_hosts = list(ip_network(f"{ip_addr}/{prefix_length}", strict=False).hosts())
     task_list = [asyncio.create_task(async_ping(str(host), semaphore)) for host in possible_hosts]
-    active_match = (
-        r"[1-9]\d* received"  # Match for packets received > 0 in the ping output
-    )
     response_list = await asyncio.gather(
         *task_list
     )  # Gathering the tasks by unpacking task_list into response_list
@@ -89,9 +82,9 @@ async def async_ping_sweep(addr, prefix_length, count="1", task_count=254):
     for index, tup in enumerate(
         response_list
     ):  # proc.communicate() returns a tuple with the first index being the response
-        response = tup[0].decode()
-        if bool(re.search(active_match, response)):
-            print(response)
+        response = tup[0]
+        if b"1 received" in response:
+            print(response.decode())
             active_hosts.append(
                 possible_hosts[index]
             )  # Append every host that responded to a list
@@ -99,11 +92,20 @@ async def async_ping_sweep(addr, prefix_length, count="1", task_count=254):
     return active_hosts
 
 
+def traceroute(ip_addr: str, hops=30):
+    with socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM, ) as tr:
+        tr.bind(get_local_ip())
+        for ttl in hops:
+            pass
 
 
-# async def async_traceroute():
-#     asyncio.create_subprocess_exec("")
-#     pass
+
+
+
+async def async_traceroute(hosts: list):
+    pass
+
+
 
 
 if __name__ == "__main__":
