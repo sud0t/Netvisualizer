@@ -10,7 +10,7 @@ from ipaddress import ip_address, ip_network
 
 def main():
     try:
-        asyncio.run(async_ping_sweep(get_local_ip(), 18))
+        asyncio.run(async_ping_sweep(get_local_ip(), 18, task_count=508))
     except Exception as e:
         print(f"error: {e}")
 
@@ -53,8 +53,8 @@ def ping_sweep(addr: str, prefix_length: int):
     return active_hosts
 
 
-async def async_ping_sweep(addr, prefix_length, count="1"):
-    # TODO: Return values other than just active hosts
+async def async_ping_sweep(addr, prefix_length, count="1", task_count=254):
+    # Use the correct ping argument based off OS
     if os.name == "nt":
         ping_count_arg = "-n"
     elif os.name == "posix":
@@ -62,7 +62,7 @@ async def async_ping_sweep(addr, prefix_length, count="1"):
     else:
         ping_count_arg = "-c"
 
-
+    semaphore = asyncio.Semaphore(task_count)
     async def async_ping(addr: str, semaphore) -> tuple:
         async with semaphore:
             print(f"pinging {addr}")
@@ -76,7 +76,7 @@ async def async_ping_sweep(addr, prefix_length, count="1"):
             )
             return await proc.communicate()  # Returns tuple with 2 bytes objects
 
-    semaphore = asyncio.Semaphore(254)
+
     possible_hosts = list(ip_network(f"{addr}/{prefix_length}", strict=False).hosts())
     task_list = [asyncio.create_task(async_ping(str(host), semaphore)) for host in possible_hosts]
     active_match = (
@@ -84,7 +84,7 @@ async def async_ping_sweep(addr, prefix_length, count="1"):
     )
     response_list = await asyncio.gather(
         *task_list
-    )  # Gathering the coroutine tasks by unpacking task_list into response_list
+    )  # Gathering the tasks by unpacking task_list into response_list
     active_hosts = []
     for index, tup in enumerate(
         response_list
