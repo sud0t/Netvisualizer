@@ -17,7 +17,7 @@ from ipaddress import IPv4Address, ip_address, ip_network
 
 # TODO: Add layer 2 host enumeration
 # Top level enumeration function
-async def async_ping_sweep(ip_addr: str, prefix_length: int, count="1", task_count=254) -> list:
+async def async_ping_sweep(ip_addr: str, prefix_length: int, count="1", task_count=254) -> list[Host]:
     """
     Runs a ping sweep based off given IP address and prefix length
     task_count is how many pings can be executing concurrently 

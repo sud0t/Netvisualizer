@@ -39,8 +39,8 @@ You are going to be handling the graphics side of this project, do not touch the
 
 The only coupling between the networking code and the graphics code is a `Host` object (and the JSON it serializes to). The networking code fills it in, the graphics code reads it, and neither imports the other.
 
-### Next step (Kyler): write `pynmapper/model.py` with `Host` and `Port`
-Put it in a neutral module, not in `netutils.py` and not in `graphics/`. Suggested shape:
+### `pynmapper/model.py` (written by Kyler, exists): `Host` and `Port`
+Lives in a neutral module, not in `netutils.py` and not in `graphics/`. Current shape (the graphics code consumes exactly this; `label` is a property):
 
 ```python
 from dataclasses import dataclass, field
@@ -49,16 +49,14 @@ from ipaddress import IPv4Address
 @dataclass
 class Port:
     number: int
-    proto: str = "tcp"        # tcp / udp
-    service: str | None = None
-    state: str = "open"
+    proto: str                # tcp / udp
 
 @dataclass
 class Host:
-    ip: IPv4Address
+    ip: IPv4Address | IPv6Address
     hostname: str | None = None
-    ports: list[Port] = field(default_factory=list)
-    status: str = "up"        # up / down / unknown
+    open_ports: list[Port] = field(default_factory=list)
+    is_local: bool | None = None
     extra: dict = field(default_factory=dict)   # anything new goes here first
 
     @property
@@ -66,10 +64,10 @@ class Host:
         return self.hostname or str(self.ip)
 ```
 
-Things to watch:
-- Use `field(default_factory=list)` for `ports`; a plain `ports=[]` default is shared between every `Host` instance.
-- Make `Port` its own small class rather than a list of ints, because ports need protocol and state and the first scapy scan will want them.
-- `get_host_names` can stay as is, or become a function that sets `host.hostname` on each `Host` object, which is simpler than re-matching lists.
+Notes:
+- `async_ping_sweep` now returns `list[Host]`; the graphics adapter `from_hosts` takes that list plus the scanner IP.
+- Fields added to `Host` or `Port` later (service, state, mac, ...) show up in the JSON and the info panel automatically.
+- `get_host_names` can stay as is (graphics matches its tuples by IP via `apply_hostnames`), or become a netutils function that sets `host.hostname` directly.
 
 ### Why
 - A sweep result today is a bare list of IPs, with hostnames in a separate shorter list that has to be re-aligned by hand. `Host` keeps ip, hostname and ports together.
