@@ -10,8 +10,16 @@ You are going to be handling the graphics side of this project (Rust), do not to
 - Each host is a node that can be clicked on to reveal more information (such as open ports, the ports type, etc)
 
 ## TODO
-- Enumerate ifnames and subnet mask with subprocess
-- Add PyO3 so that all Python can be embedded in Rust and program can be started from one executable binary
+### Python
+- Remove scapy dependency 
+- Craft packets using struct and socket for layer 3 enumeration
+- Layer 2 host enumeration (ARP) with socket, struct, and async: finds hosts that ignore ping, but needs root.
+- Download MAC vendor CSV and use `pandas` to give Hosts proper names if they weren't resolved by reverse DNS lookup
+- Check if SSH or Telnet ports are open and build a console in the app that gives access with proper features and allows for SSH or Telnet connections to hosts that allow it traceroute, so the map can show real paths instead of a star from the scanner.
+
+### Rust
+- `PyO3` crate so python can be embedded
+- Transfer networking backend to Rust keeping CSV parsing for MAC addresses and the SSH/Telnet setup to Python (asyncssh)
 
 ## Decisions made (2026-10-19)
 
