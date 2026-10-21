@@ -26,6 +26,12 @@ You are going to be handling the graphics side of this project, do not touch the
 - Reasons: best visuals and free HTML info panels, keeps all graphics work separate from the networking code, VPython is browser based anyway but with dated visuals and global scene state (and it currently fails to import in `.venv` on Python 3.14 because setuptools is missing).
 - Alternatives considered and rejected for now: Panda3D (pure Python engine, good but heavier), Ursina, VPython as originally spec'd.
 
+### Native viewer in Rust: Bevy + bevy_egui (decided 2026-10-20, evening; see Milestone 7)
+- Kyler wants the map to run without a browser, and without Google in particular. The three.js page needs a browser engine (any browser: `BROWSER=firefox` works today), so the **next milestone, ahead of everything else, is a native viewer in Rust** using Bevy (renders to its own window) and bevy_egui (sidebar, HUD, help overlay).
+- The Python side is untouched: the viewer reads the same JSON document from `/api/map` (polling `/api/health` for the revision) or from a `--save` file. This is exactly what the one-contract design was for.
+- The web page stays in the repo as the reference for feature parity and as the remote-viewing option (`--host 0.0.0.0`); it becomes the fallback once the native viewer reaches parity.
+- Alternatives considered: pywebview (native window, but still a web engine), Panda3D (pure Python, has a 3.14 wheel, weak GUI toolkit), three-d + egui (lighter Rust, closest port), kiss3d (too limited). Bevy chosen for capability and longevity; the spec always anticipated Rust.
+
 ### Launching (implemented 2026-10-20)
 - `python -m pynmapper` detects the interface with the default route, sweeps its subnet, starts the map server, opens the browser, then publishes the map again after each stage (sweep, names, ports) so the page redraws live. Options: a CIDR argument, `-i IFACE`, `--ports [LIST]`, `--no-names`, `--timeout`, `--concurrency`, `--save FILE`, `--json FILE`, `--demo`, `--no-browser`, `--no-serve`, `--port`, `--host`, `--list-interfaces`.
 - `python -m pynmapper.graphics --demo` renders ~25 fake hosts with no network needed (day-to-day graphics development); `--json`/`--save` replay and dump maps there too.
@@ -139,13 +145,72 @@ tests/ (repo root)          # stdlib unittest: model round trip, adapters (hostn
 4. **done (2026-10-20)** `controls.js` (WASD/QE, Shift, right-mouse look, wheel = speed, fly-to and reset tweens), `picking.js` (hover, click, double-click, selection ring), `panel.js` (host list with filter, generic details card).
 5. **done (2026-10-20)** legend, help overlay (`?`), labels fade with distance, "down" hosts drawn grey (read from `status` or `extra.status` once the backend reports it), revision polling, `--save/--json` round trip, shader-drawn grid floor, framing that leaves room for the sidebar.
 6. **done (2026-10-20)** `__main__.py` with argparse; real sweep end to end verified on the dev LAN (10 hosts, gateway with 6 open ports, 3.3 s with `--ports`).
+7. **in progress:** native viewer in Rust with Bevy + bevy_egui, feature parity with the web page. 7.1 (skeleton) done 2026-10-20; 7.2 (fly controls, picking, labels) done 2026-10-21, its review pass still owed; **next is 7.3** (egui sidebar, HUD, help overlay, legend). Plan below.
+8. Later: ARP enumeration (root), traceroute topology, UDP ports.
 
 ### Frontend verification (2026-10-20)
 - `tests/test_graphics_web.py` checks, without a browser, that every module import, stylesheet reference and DOM id the JavaScript uses resolves, and that the server serves them with the right MIME types.
 - The behaviour (hover, click, fly-to, keys, right-drag look, wheel, filter, help, selection surviving a map reload, label fade, "down" colouring, sidebar-aware framing) was exercised in headless Chrome over the DevTools protocol; 40 checks pass with no console errors.
 - Known browser quirk: Chrome drops GL line segments that cross the camera's near plane, so a `GridHelper` loses all of its depth-running lines whenever the camera is over the grid. The floor is therefore a plane whose grid is drawn in the fragment shader.
 
+## Milestone 7: native viewer (Rust, Bevy + bevy_egui)
+
+### Goal
+`python -m pynmapper` opens a native window instead of a browser. The window shows the same map, with the same controls and panel, and redraws live as the scan stages arrive. Python scans and serves exactly as today.
+
+### Versions (checked on crates.io, 2026-10-20)
+- `/usr/sbin/rustc` and `cargo` are rustup proxies (the pacman package `rustup` provides `rust`); the default toolchain was stable 1.96.1. **Bevy 0.20 declares `rust-version = 1.97.1`** and refuses to build on older compilers, so `viewer/rust-toolchain.toml` pins `1.99.1` (the newest stable that day); rustup installs it on the first `cargo` command inside `viewer/` and the default toolchain is left alone. bevy_egui 0.43.1 only needs 1.95. `rustup update` would make the pin redundant.
+- `bevy = "0.20.0"` (features `wayland`, `png`), `bevy_egui = "0.43.1"` (must be the release built for Bevy 0.20; check its README compatibility table before bumping either; added in 7.2 with `default-features = false, features = ["render", "default_fonts", "manage_clipboard"]`, so no `open_url` browser launcher and no bevy_picking bridge), `serde`, `serde_json` with `preserve_order` (host fields stay in Python's order for the details card), `clap` 4.6 (derive), `wgpu = "30"` (Bevy's own wgpu, used directly only to probe for a GPU adapter), and from 7.4 `ureq = "3.4"` (blocking HTTP on a background thread; no async runtime needed).
+- `cargo run --features dev` links Bevy dynamically: the first build took 9 min 50 s on the dev laptop (12 threads), a rebuild after a source edit about 30 s, `cargo clippy` 2 min. The Python launcher (7.5) will run the static release build (`cargo build --release`, thin LTO; 6 min 20 s, `viewer/target/release/pynmapper-viewer`).
+
+### Layout
+```
+viewer/                       # cargo crate, binary name pynmapper-viewer
+  Cargo.toml
+  src/
+    main.rs                   # clap args: URL (default http://127.0.0.1:8765) | --json FILE; builds the App, adds plugins
+    map.rs                    # serde structs for the JSON contract; Host keeps unknown keys (#[serde(flatten)] extra map) so new backend fields reach the details card
+    fetch.rs                  # std::thread: poll /api/health every 2 s, GET /api/map when the revision changes, send over an mpsc channel into a Bevy Resource
+    scene.rs                  # camera, lights, clear colour, grid floor (Gizmos lines or a shader plane), framing with an inset for the sidebar
+    graph.rs                  # spawn/despawn one entity per host (sphere mesh, material per role/status), link lines, bounds
+    controls.rs               # fly camera: WASD/QE, Shift, right mouse held = look (cursor grab), wheel = speed, R, F, fly-to and reset tweens, userMoved flag
+    picking.rs                # ray-sphere hover, click select, double-click fly-to, selection ring
+    ui.rs                     # egui: HUD (status/stage/speed), sidebar (filter, host list, generic details card), help overlay, legend, labels drawn with the egui painter
+```
+After 7.2 these exist: `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `src/{main,map,scene,graph,theme,controls,picking,ui}.rs` and `tests/fixtures/demo.json` (the 27-host demo map; regenerate with `python -m pynmapper.graphics --demo --dump > viewer/tests/fixtures/demo.json`). Only `fetch.rs` (7.4) is still to come; `ui.rs` holds the labels now and grows the sidebar, HUD and help in 7.3.
+
+Each file maps one-to-one onto a `web/*.js` module, so the JavaScript is the port guide. Keep the names: anyone reading `controls.js` and `controls.rs` side by side should see the same ideas.
+
+### Steps
+- 7.1 **done 2026-10-20.** `cargo run --features dev -- --json scan.json` opens a window, draws spheres and links at the JSON positions, frames the camera (and re-frames on resize). Hosts without a position go on a fallback ring, as in `graph.js`. Also in: `--exit-after-frames N` and `--screenshot FILE` (smoke test), the window title with the host count, the GPU-backend probe described below. A URL argument is accepted but exits with "not implemented yet (step 7.4)".
+- 7.2 **done 2026-10-21 (review pass still owed, see Verification).** `controls.rs` (WASD/QE, Shift, right-mouse look with `CursorGrabMode::Locked` + hidden cursor while held, wheel = speed, `Tween`, `fly_to`, `user_moved`), `picking.rs` (ray-sphere hover with 1.2× slack, click with 5 px slop, double click = second click within 0.4 s, selection by host id, ring as a gizmo circle facing the camera), `ui.rs` (labels through the egui painter, bottom-centred above each sphere, fading over the fog range, styled per role/hover/selection; `UiInput` flags so controls and picking yield to egui), `scene.rs` (later maps glide to a new framing while `user_moved` is false; `ResetView` message for R), `main.rs` (`ViewerSet` order Build → Frame → Controls → Picking → Draw; R/F/Escape; `--select HOST_ID [--fly]` debug flags for screenshots). Verified: 32 tests (headless Bevy `App` tests drive the keyboard, wheel and tweens), screenshots show labels, the brighter selected sphere, the ring and the fly-to pose. **Not yet exercised by a human:** right-drag look and pointer lock on Hyprland, wheel feel, double-click timing.
+- 7.3 egui sidebar: filter box, host list (role dot, label, ip; click = select + fly), details card rendered generically from `serde_json::Value` exactly as `panel.js` does (scalars as rows, arrays of objects as tables, objects nested), help overlay on `?`, legend, HUD with stage text and speed.
+- 7.4 Live mode: poll `/api/map` via the fetch thread, rebuild on revision change, keep the selection by id, re-frame until the user moves the camera. Map `scan.stage` into the HUD.
+- 7.5 Python wiring: `__main__.py --viewer native|web` (default `web` until 7.6). `native` runs `viewer/target/release/pynmapper-viewer <url>` and falls back to the browser with a clear message if the binary is not built. `--no-browser` becomes `--no-open`. README gains the `cargo build --release` step.
+- 7.6 Parity check against the web page's feature list (the 40 browser checks are the list); flip the default to `native`.
+
+### Decisions already made for the port
+- Labels through the egui painter rather than Bevy text billboards: no font assets to ship, trivial distance fade, and they sit in the same overlay as the sidebar.
+- The grid floor as Gizmos line segments first (Bevy draws them as quads, so the near-plane line bug from the browser does not apply); a shader plane only if the gizmo grid looks worse.
+- HTTP on a plain thread with `ureq` and `std::sync::mpsc`; Bevy systems only ever read a `Resource` that holds the latest document.
+- Unknown JSON keys are kept, never dropped, so the generic details card keeps working when `model.py` grows.
+- Theme colours live in one `theme.rs` constant table mirroring `style.css`.
+- (7.2 outcomes) Input in Bevy 0.20: `ButtonInput<KeyCode>` / `ButtonInput<MouseButton>`, `AccumulatedMouseMotion` and `AccumulatedMouseScroll` resources, cursor grab and visibility on the window entity's `CursorOptions` component. One wheel notch arrives as one `Line`; the browser's `deltaY` was ~100 px per notch, so `WHEEL_LINE_PX = 100` keeps the same speed curve. Pitch/yaw come from `Quat::to_euler(EulerRot::YXZ)`.
+- egui 0.36 renamed the input queries: `Context::egui_wants_pointer_input`, `egui_wants_keyboard_input`, `is_pointer_over_egui` (`Rect::round_ui` is a trait method on `emath::GuiRounding`). UI systems run in bevy_egui's `EguiPrimaryContextPass` schedule, get the context with `EguiContexts::ctx_mut()?` (fallible systems returning `Result`), and `EguiPlugin::default()` creates the primary context by itself.
+- The selection ring is `gizmos.circle(...)` in its own `SelectionGizmos` config group (2.5 px, `depth_bias = -1.0` so it shows through other nodes, like the web ring's `depthTest: false`).
+- Headless tests build an `App` with `MinimalPlugins` + `TimeUpdateStrategy::ManualDuration(16 ms)` and the input resources inserted by hand (no `InputPlugin`, whose PreUpdate clear would erase a `just_pressed` set from the test); `ButtonInput::clear()` runs after every simulated frame instead.
+- (7.1 outcomes) Links are gizmo lines as well, redrawn every frame from the endpoints resolved into the `Graph` resource, so a map change only has node entities to despawn. The gizmo grid is line strips with a per-vertex alpha fade over the fog range, re-centred on the camera each frame, so it has no edge to fly past; it looked right on the first screenshot, so no shader plane.
+- Framing differs from `scene.js` on purpose: the port fits the box to the usable region exactly (one lower bound on the camera distance per edge of the region), whereas `scene.js` slides the look target by a pixel offset measured at the box centre's depth, which lets near corners poke out under a wide sidebar. Without insets the two formulas agree. Back-porting the exact version to `scene.js` is a small follow-up.
+- The camera uses `Tonemapping::None` so role colours come out as the CSS swatches, like the browser (three.js tone mapping is off). Lights: ambient 400 with the hemisphere sky tint, sun 6000 lux; close to the page on the demo map.
+- GPU backend: Bevy honours `WGPU_BACKEND`, and the Hyprland config (`~/.config/hypr/configs/environment.lua`) exports `WGPU_BACKEND=gl` desktop-wide. wgpu's OpenGL path finds no adapter on this machine (under Wayland or X11), so Bevy panicked with "Unable to find a GPU". `main.rs` now probes the requested backend the way Bevy would and, if it has no adapter, prints one line and lets wgpu choose (Vulkan on the Quadro T1000). Unsetting that variable, or `WGPU_BACKEND=vulkan`, works without the fallback.
+
+### Verification
+- `cargo build --release` and `cargo test` (map parsing from the real `scan.json`, fallback ring, port-table column union). After 7.1: 16 tests pass (`cargo test --features dev`: demo fixture parsing, unknown keys kept in order, lenient positions, status from `status`/`extra.status`, fallback ring, bounds, framing geometry with and without insets, smoothstep); `cargo clippy --all-targets` is clean and `cargo fmt` applied.
+- A `--exit-after-frames N` flag so `pynmapper-viewer --json scan.json --exit-after-frames 120` is a smoke test that opens, renders and quits with status 0; `--screenshot FILE` saves a PNG 30 frames before the exit, which is how a session without eyes on the window checks the picture. 150 frames of the demo map take about 2 s end to end. `--select 192.168.1.1 --fly` adds a selection and a fly-to, so one screenshot shows the ring, the selected label style and the fly-to pose.
+- After 7.2: 32 tests pass, `cargo clippy --all-targets` clean, `cargo fmt` applied. **Owed before 7.3 starts:** a review pass of the 7.2 code (parity with controls.js / picking.js, Bevy 0.20 API use, Wayland pointer lock), ideally as an adversarial multi-agent review, and a hands-on check of right-drag look, wheel and double click.
+- Manual parity pass with the live scan: stages appear, re-framing works, selection survives updates, right-drag look and pointer grab behave on Wayland.
+
 ### Environment facts
 - Repo root `Pynmapper/` has an empty `pyproject.toml` and `.venv` (Python 3.14, numpy, scapy 2.7 installed). `pynmapper/` is a package (`__init__.py`, `__main__.py`); run with `python -m pynmapper` from the repo root; internal imports are absolute (`from pynmapper.model import Host`).
 - Graphics adds no Python dependencies (http.server, json, webbrowser, dataclasses, threading only). Networking uses the system `ping`, `socket`, `asyncio`, and scapy only for the routing table (optional).
-- Dev machine: Wayland, NVIDIA GPU with OpenGL 4.6, Chrome available for testing.
+- Dev machine: Hyprland (Wayland) on a hybrid Intel + NVIDIA Quadro T1000 laptop, 12 threads; the Hyprland config exports `WGPU_BACKEND=gl` and `WINIT_UNIX_BACKEND=x11` (the latter is ignored by winit 0.30). Chrome available for testing. Hyprland tiles new windows, so the viewer rarely gets its requested 1280×720; framing re-runs on resize.

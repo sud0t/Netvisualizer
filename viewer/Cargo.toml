@@ -1,0 +1,47 @@
+[package]
+name = "pynmapper-viewer"
+version = "0.1.0"
+edition = "2024"
+description = "Native viewer for Pynmapper network maps (Bevy); reads the same JSON the web page does"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "pynmapper-viewer"
+path = "src/main.rs"
+
+[dependencies]
+# Versions checked on crates.io 2026-10-20 (see project_spec.md, Milestone 7).
+# bevy_egui must be the release built for this exact Bevy minor; bump them together.
+bevy = { version = "0.20.0", features = ["wayland", "png"] }
+# The egui release built for Bevy 0.20 (compatibility table in bevy_egui's README).
+# `render` draws egui over the Bevy frame; `default_fonts` ships the fonts the
+# labels and sidebar use; `manage_clipboard` lets the filter box paste. The
+# default `open_url` (a browser launcher) and `picking` (bevy_picking bridge)
+# are left out: nothing here needs them.
+bevy_egui = { version = "0.43.1", default-features = false, features = ["render", "default_fonts", "manage_clipboard"] }
+serde = { version = "1.0", features = ["derive"] }
+# preserve_order keeps host fields in the order Python wrote them, so the
+# generic details card lists them like panel.js does (Object.entries order).
+serde_json = { version = "1.0", features = ["preserve_order"] }
+clap = { version = "4.6", features = ["derive"] }
+# Same wgpu Bevy renders with; used directly only to probe for a GPU adapter
+# before Bevy starts (see render_settings in main.rs).
+wgpu = { version = "30", default-features = false }
+
+[features]
+# `cargo run --features dev` links Bevy as a shared library: rebuilds after a
+# source edit take seconds instead of minutes. Never use it for a release build.
+dev = ["bevy/dynamic_linking"]
+
+# Bevy's recommended profiles: our own code unoptimised for quick compiles,
+# every dependency (Bevy, wgpu) optimised so the dev build still renders smoothly.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

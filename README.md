@@ -35,6 +35,29 @@ redraws itself as each stage completes.
 | `F`, `R` | fly to the selection; reset the view |
 | `/`, `Esc`, `?` | filter the host list; deselect; help |
 
+## Native viewer (work in progress)
+
+`viewer/` is a Rust crate (Bevy 0.20) that draws the same JSON map in its own
+window, for machines where no browser should be involved. So far it renders a
+saved scan with the same fly controls, picking and labels as the page; the
+sidebar and live updates are the next steps (milestone 7 in
+`pynmapper/project_spec.md`).
+
+```sh
+cd viewer
+cargo run --features dev -- --json tests/fixtures/demo.json   # first build takes ~10 min
+cargo run --features dev -- --json ../last.json               # a map saved with --save
+cargo test --features dev
+```
+
+`rust-toolchain.toml` pins the compiler Bevy needs (rustc 1.99.1); rustup
+installs it on the first `cargo` command here. `--exit-after-frames 120
+--screenshot out.png` renders two seconds and quits, which is the smoke test;
+add `--select 192.168.1.1 --fly` to see a selection in that screenshot.
+If the window never appears with "Unable to find a GPU", a `WGPU_BACKEND`
+variable in your environment names a backend your GPU cannot use; the viewer
+prints a line and falls back to another one on its own.
+
 ## Layout
 
 ```
@@ -44,4 +67,5 @@ pynmapper/
   model.py        Host and Port: the one shape shared by both sides
   graphics/       turns Hosts into a JSON map and serves the three.js page
 tests/            python -m unittest discover tests
+viewer/           native Rust viewer for the same JSON (Bevy); cargo test
 ```

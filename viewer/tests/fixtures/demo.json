@@ -1,0 +1,960 @@
+{
+  "version": 1,
+  "revision": 0,
+  "generated_at": "2026-10-21T04:33:06+00:00",
+  "scan": {
+    "type": "demo",
+    "network": "192.168.1.0/24",
+    "scanner_ip": "192.168.1.50",
+    "stage": null
+  },
+  "hosts": [
+    {
+      "id": "192.168.1.50",
+      "label": "pynmapper-host.lan",
+      "role": "scanner",
+      "ip": "192.168.1.50",
+      "hostname": "pynmapper-host.lan",
+      "open_ports": [
+        {
+          "number": 22,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": true,
+      "extra": {
+        "note": "this machine ran the scan"
+      },
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "192.168.1.1",
+      "label": "gateway.lan",
+      "role": "gateway",
+      "ip": "192.168.1.1",
+      "hostname": "gateway.lan",
+      "open_ports": [
+        {
+          "number": 53,
+          "proto": "udp",
+          "service": null
+        },
+        {
+          "number": 80,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 443,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "vendor": "TP-Link"
+      },
+      "position": [
+        8.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "192.168.1.9",
+      "label": "192.168.1.9",
+      "role": "host",
+      "ip": "192.168.1.9",
+      "hostname": null,
+      "open_ports": [
+        {
+          "number": 139,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 53,
+          "proto": "udp",
+          "service": null
+        },
+        {
+          "number": 3389,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {},
+      "position": [
+        7.391,
+        0.0,
+        3.061
+      ]
+    },
+    {
+      "id": "192.168.1.18",
+      "label": "nas-2.lan",
+      "role": "host",
+      "ip": "192.168.1.18",
+      "hostname": "nas-2.lan",
+      "open_ports": [
+        {
+          "number": 22,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 631,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 53,
+          "proto": "udp",
+          "service": null
+        },
+        {
+          "number": 8443,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "latency_ms": 30.6
+      },
+      "position": [
+        5.657,
+        0.0,
+        5.657
+      ]
+    },
+    {
+      "id": "192.168.1.26",
+      "label": "192.168.1.26",
+      "role": "host",
+      "ip": "192.168.1.26",
+      "hostname": null,
+      "open_ports": [
+        {
+          "number": 53,
+          "proto": "udp",
+          "service": null
+        },
+        {
+          "number": 445,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 1900,
+          "proto": "udp",
+          "service": null
+        },
+        {
+          "number": 3389,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {},
+      "position": [
+        3.061,
+        0.0,
+        7.391
+      ]
+    },
+    {
+      "id": "192.168.1.32",
+      "label": "192.168.1.32",
+      "role": "host",
+      "ip": "192.168.1.32",
+      "hostname": null,
+      "open_ports": [
+        {
+          "number": 5353,
+          "proto": "udp",
+          "service": null
+        },
+        {
+          "number": 8443,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 80,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "vendor": "TP-Link",
+        "latency_ms": 13.5
+      },
+      "position": [
+        0.0,
+        0.0,
+        8.0
+      ]
+    },
+    {
+      "id": "192.168.1.36",
+      "label": "192.168.1.36",
+      "role": "host",
+      "ip": "192.168.1.36",
+      "hostname": null,
+      "open_ports": [
+        {
+          "number": 631,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 5353,
+          "proto": "udp",
+          "service": null
+        },
+        {
+          "number": 53,
+          "proto": "udp",
+          "service": null
+        },
+        {
+          "number": 139,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "vendor": "Sony"
+      },
+      "position": [
+        -3.061,
+        0.0,
+        7.391
+      ]
+    },
+    {
+      "id": "192.168.1.56",
+      "label": "ap-6.lan",
+      "role": "host",
+      "ip": "192.168.1.56",
+      "hostname": "ap-6.lan",
+      "open_ports": [],
+      "is_local": null,
+      "extra": {
+        "vendor": "Ubiquiti",
+        "latency_ms": 7.2
+      },
+      "position": [
+        -5.657,
+        0.0,
+        5.657
+      ]
+    },
+    {
+      "id": "192.168.1.68",
+      "label": "tablet-7.lan",
+      "role": "host",
+      "ip": "192.168.1.68",
+      "hostname": "tablet-7.lan",
+      "open_ports": [
+        {
+          "number": 80,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 8080,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "latency_ms": 6.8
+      },
+      "position": [
+        -7.391,
+        0.0,
+        3.061
+      ]
+    },
+    {
+      "id": "192.168.1.100",
+      "label": "192.168.1.100",
+      "role": "host",
+      "ip": "192.168.1.100",
+      "hostname": null,
+      "open_ports": [
+        {
+          "number": 8080,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 22,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "vendor": "TP-Link",
+        "latency_ms": 39.3
+      },
+      "position": [
+        -8.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "192.168.1.102",
+      "label": "pi-9.lan",
+      "role": "host",
+      "ip": "192.168.1.102",
+      "hostname": "pi-9.lan",
+      "open_ports": [
+        {
+          "number": 443,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "vendor": "Intel",
+        "latency_ms": 21.7
+      },
+      "position": [
+        -7.391,
+        0.0,
+        -3.061
+      ]
+    },
+    {
+      "id": "192.168.1.113",
+      "label": "192.168.1.113",
+      "role": "host",
+      "ip": "192.168.1.113",
+      "hostname": null,
+      "open_ports": [
+        {
+          "number": 631,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "vendor": "HP",
+        "latency_ms": 11.0
+      },
+      "position": [
+        -5.657,
+        0.0,
+        -5.657
+      ]
+    },
+    {
+      "id": "192.168.1.118",
+      "label": "tablet-11.lan",
+      "role": "host",
+      "ip": "192.168.1.118",
+      "hostname": "tablet-11.lan",
+      "open_ports": [],
+      "is_local": null,
+      "extra": {
+        "vendor": "Apple",
+        "latency_ms": 22.6
+      },
+      "position": [
+        -3.061,
+        0.0,
+        -7.391
+      ]
+    },
+    {
+      "id": "192.168.1.123",
+      "label": "nas-12.lan",
+      "role": "host",
+      "ip": "192.168.1.123",
+      "hostname": "nas-12.lan",
+      "open_ports": [
+        {
+          "number": 445,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 3389,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 5353,
+          "proto": "udp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "vendor": "Ubiquiti",
+        "latency_ms": 14.5
+      },
+      "position": [
+        -0.0,
+        0.0,
+        -8.0
+      ]
+    },
+    {
+      "id": "192.168.1.127",
+      "label": "switch-13.lan",
+      "role": "host",
+      "ip": "192.168.1.127",
+      "hostname": "switch-13.lan",
+      "open_ports": [
+        {
+          "number": 3389,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 1900,
+          "proto": "udp",
+          "service": null
+        },
+        {
+          "number": 445,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 8080,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "vendor": "Samsung",
+        "latency_ms": 22.2
+      },
+      "position": [
+        3.061,
+        0.0,
+        -7.391
+      ]
+    },
+    {
+      "id": "192.168.1.129",
+      "label": "printer-14.lan",
+      "role": "host",
+      "ip": "192.168.1.129",
+      "hostname": "printer-14.lan",
+      "open_ports": [
+        {
+          "number": 139,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 22,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 80,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 3389,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "latency_ms": 30.2
+      },
+      "position": [
+        5.657,
+        0.0,
+        -5.657
+      ]
+    },
+    {
+      "id": "192.168.1.148",
+      "label": "phone-15.lan",
+      "role": "host",
+      "ip": "192.168.1.148",
+      "hostname": "phone-15.lan",
+      "open_ports": [],
+      "is_local": null,
+      "extra": {
+        "latency_ms": 11.8
+      },
+      "position": [
+        7.391,
+        0.0,
+        -3.061
+      ]
+    },
+    {
+      "id": "192.168.1.158",
+      "label": "phone-16.lan",
+      "role": "host",
+      "ip": "192.168.1.158",
+      "hostname": "phone-16.lan",
+      "open_ports": [
+        {
+          "number": 443,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 8443,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 139,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 3389,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "vendor": "HP",
+        "latency_ms": 4.8
+      },
+      "position": [
+        13.315,
+        1.5,
+        4.326
+      ]
+    },
+    {
+      "id": "192.168.1.169",
+      "label": "tv-17.lan",
+      "role": "host",
+      "ip": "192.168.1.169",
+      "hostname": "tv-17.lan",
+      "open_ports": [
+        {
+          "number": 53,
+          "proto": "udp",
+          "service": null
+        },
+        {
+          "number": 139,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 80,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "vendor": "Samsung"
+      },
+      "position": [
+        8.229,
+        1.5,
+        11.326
+      ]
+    },
+    {
+      "id": "192.168.1.197",
+      "label": "nas-18.lan",
+      "role": "host",
+      "ip": "192.168.1.197",
+      "hostname": "nas-18.lan",
+      "open_ports": [
+        {
+          "number": 22,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "vendor": "Intel",
+        "latency_ms": 6.7
+      },
+      "position": [
+        0.0,
+        1.5,
+        14.0
+      ]
+    },
+    {
+      "id": "192.168.1.198",
+      "label": "192.168.1.198",
+      "role": "host",
+      "ip": "192.168.1.198",
+      "hostname": null,
+      "open_ports": [
+        {
+          "number": 5353,
+          "proto": "udp",
+          "service": null
+        },
+        {
+          "number": 53,
+          "proto": "udp",
+          "service": null
+        },
+        {
+          "number": 1900,
+          "proto": "udp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "vendor": "Intel",
+        "latency_ms": 23.2
+      },
+      "position": [
+        -8.229,
+        1.5,
+        11.326
+      ]
+    },
+    {
+      "id": "192.168.1.204",
+      "label": "server-20.lan",
+      "role": "host",
+      "ip": "192.168.1.204",
+      "hostname": "server-20.lan",
+      "open_ports": [
+        {
+          "number": 22,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 139,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 443,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {},
+      "position": [
+        -13.315,
+        1.5,
+        4.326
+      ]
+    },
+    {
+      "id": "192.168.1.208",
+      "label": "thermostat-21.lan",
+      "role": "host",
+      "ip": "192.168.1.208",
+      "hostname": "thermostat-21.lan",
+      "open_ports": [],
+      "is_local": null,
+      "extra": {
+        "vendor": "TP-Link",
+        "latency_ms": 16.8
+      },
+      "position": [
+        -13.315,
+        1.5,
+        -4.326
+      ]
+    },
+    {
+      "id": "192.168.1.216",
+      "label": "nas-22.lan",
+      "role": "host",
+      "ip": "192.168.1.216",
+      "hostname": "nas-22.lan",
+      "open_ports": [
+        {
+          "number": 22,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 3389,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 53,
+          "proto": "udp",
+          "service": null
+        },
+        {
+          "number": 8080,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "vendor": "Intel",
+        "latency_ms": 14.1
+      },
+      "position": [
+        -8.229,
+        1.5,
+        -11.326
+      ]
+    },
+    {
+      "id": "192.168.1.219",
+      "label": "server-23.lan",
+      "role": "host",
+      "ip": "192.168.1.219",
+      "hostname": "server-23.lan",
+      "open_ports": [
+        {
+          "number": 3389,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 53,
+          "proto": "udp",
+          "service": null
+        },
+        {
+          "number": 8080,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "vendor": "Ubiquiti",
+        "latency_ms": 20.1
+      },
+      "position": [
+        -0.0,
+        1.5,
+        -14.0
+      ]
+    },
+    {
+      "id": "192.168.1.231",
+      "label": "thermostat-24.lan",
+      "role": "host",
+      "ip": "192.168.1.231",
+      "hostname": "thermostat-24.lan",
+      "open_ports": [
+        {
+          "number": 139,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 22,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 443,
+          "proto": "tcp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "vendor": "HP"
+      },
+      "position": [
+        8.229,
+        1.5,
+        -11.326
+      ]
+    },
+    {
+      "id": "192.168.1.250",
+      "label": "desktop-25.lan",
+      "role": "host",
+      "ip": "192.168.1.250",
+      "hostname": "desktop-25.lan",
+      "open_ports": [
+        {
+          "number": 631,
+          "proto": "tcp",
+          "service": null
+        },
+        {
+          "number": 53,
+          "proto": "udp",
+          "service": null
+        }
+      ],
+      "is_local": null,
+      "extra": {
+        "vendor": "Raspberry Pi"
+      },
+      "position": [
+        13.315,
+        1.5,
+        -4.326
+      ]
+    }
+  ],
+  "links": [
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.1",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.9",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.18",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.26",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.32",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.36",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.56",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.68",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.100",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.102",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.113",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.118",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.123",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.127",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.129",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.148",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.158",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.169",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.197",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.198",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.204",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.208",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.216",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.219",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.231",
+      "kind": "subnet"
+    },
+    {
+      "source": "192.168.1.50",
+      "target": "192.168.1.250",
+      "kind": "subnet"
+    }
+  ]
+}
