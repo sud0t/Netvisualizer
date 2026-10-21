@@ -340,5 +340,6 @@ async def async_port_scan(
     return hosts
 
 
-# TODO: Layer 2 host enumeration (ARP) with scapy: finds hosts that ignore ping, but needs root.
+# TODO: Craft packets using struct and socket for layer 3 enumeration
+# TODO: Layer 2 host enumeration (ARP) with socket, struct, and async: finds hosts that ignore ping, but needs root.
 # TODO: traceroute, so the map can show real paths instead of a star from the scanner.

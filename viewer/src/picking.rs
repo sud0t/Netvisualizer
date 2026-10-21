@@ -1,5 +1,4 @@
 //! Mouse picking: hover highlight, click to select, double click to fly to.
-//! Port of picking.js.
 //!
 //! Nodes are spheres, so every node is tested as a bounding sphere, which is
 //! exact for a sphere and cheap enough to run each frame while the pointer is
@@ -33,9 +32,9 @@ pub fn fly_distance(radius: f32) -> f32 {
     4.0 + radius * 6.0
 }
 
-/// `picker.select(id, { fly })` from anywhere but the 3D view: the host list,
-/// the details card's buttons, F and Escape, `--select`. Applied in the
-/// Picking set, so a request written by the egui pass lands next frame.
+/// A selection from anywhere but the 3D view: the host list, the details
+/// card's buttons, F and Escape, `--select`. Applied in the Picking set, so a
+/// request written by the egui pass lands next frame.
 #[derive(Message, Debug, Clone, PartialEq, Eq)]
 pub struct SelectHost {
     /// The host to select; `None` deselects. An id not in the map deselects too.
@@ -68,7 +67,7 @@ impl Picker {
         graph.nodes.get(self.selected_id.as_deref()?).copied()
     }
 
-    /// `select(id)`: remember the host; the states and ring follow on the next frame.
+    /// Remember the host; the states and ring follow on the next frame.
     pub fn select(&mut self, id: Option<String>) {
         self.selected_id = id;
     }
@@ -77,7 +76,7 @@ impl Picker {
         self.down = at;
     }
 
-    /// `isClick` plus the double-click bookkeeping the browser did for us.
+    /// Tell a click from a drag, and two quick clicks from a double click.
     pub fn release(&mut self, at: Option<Vec2>, now: f32) -> Option<Click> {
         let (down, up) = (self.down.take()?, at?);
         if down.distance(up) > CLICK_SLOP_PX {
@@ -127,7 +126,7 @@ fn configure_ring_gizmos(mut store: ResMut<GizmoConfigStore>) {
 }
 
 /// The hit nearest to the ray origin, among nodes tested as spheres a little
-/// bigger than drawn (`pick` in picking.js).
+/// bigger than drawn.
 pub fn pick_at<'a>(
     cursor: Vec2,
     camera: &Camera,
@@ -154,7 +153,7 @@ pub fn pick_at<'a>(
     best.map(|(_, entity)| entity)
 }
 
-/// Distance along the ray to a sphere (`Ray.intersectSphere` in three.js):
+/// Distance along the ray to a sphere:
 /// the near hit, or the far one when the origin is inside; `None` for a miss
 /// or a sphere entirely behind the ray.
 pub fn ray_sphere_distance(
@@ -179,8 +178,8 @@ pub fn ray_sphere_distance(
     Some(if near < 0.0 { far } else { near })
 }
 
-/// After `graph.update()` the entities are new: forget the hover and drop a
-/// selection whose host left the map (`refresh` in picking.js).
+/// After a graph rebuild the entities are new: forget the hover and drop a
+/// selection whose host left the map.
 fn refresh_after_rebuild(graph: Res<Graph>, mut picker: ResMut<Picker>) {
     if !graph.is_changed() {
         return;
@@ -327,7 +326,7 @@ fn draw_ring(
         .resolution(RING_SEGMENTS);
 }
 
-/// `flyToSelected`: used by F and by the host list.
+/// Fly to the selected host: used by F and by the host list.
 pub fn fly_to_selected(
     picker: &Picker,
     graph: &Graph,

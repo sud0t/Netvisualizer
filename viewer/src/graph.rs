@@ -1,5 +1,5 @@
 //! Turns the map document into the scene: one sphere entity per host (sized by
-//! role, coloured by role and status) and one line per link. Port of graph.js.
+//! role, coloured by role and status) and one line per link.
 //!
 //! `rebuild` runs whenever the [`MapDocument`] resource changes and replaces
 //! every node, which is cheap at LAN scale (a /24 is a few hundred entities).
@@ -24,7 +24,7 @@ pub const HIGHLIGHT_SCALE: f32 = 1.12;
 const SPHERE_SECTORS: u32 = 32;
 const SPHERE_STACKS: u32 = 20;
 
-/// `NODE_RADIUS` in graph.js.
+/// Sphere radius per role: the scanner is the biggest, then the gateway.
 pub fn node_radius(role: Role) -> f32 {
     match role {
         Role::Scanner => 1.1,
@@ -69,7 +69,7 @@ impl ColorKey {
     ];
 }
 
-/// `STATES` in graph.js: how a node is currently drawn.
+/// How a node is currently drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum NodeState {
     #[default]
@@ -79,7 +79,7 @@ pub enum NodeState {
 }
 
 impl NodeState {
-    /// `EMISSIVE` in graph.js: how much of its own colour a sphere glows with.
+    /// How much of its own colour a sphere glows with.
     fn emissive(self) -> f32 {
         match self {
             NodeState::None => 0.28,
@@ -93,7 +93,7 @@ impl NodeState {
 
 /// The latest map: loaded once from `--json`, or replaced by fetch.rs whenever
 /// the server's revision changes. `None` until the first map arrives in live
-/// mode (`revision === null` in app.js).
+/// mode.
 #[derive(Resource, Debug, Default)]
 pub struct MapDocument(pub Option<MapDoc>);
 
@@ -111,11 +111,12 @@ impl GraphAssets {
     }
 }
 
-/// One per host entity (`mesh.userData` in graph.js).
+/// One per host entity: what the rest of the viewer needs to know about it.
 #[derive(Component, Debug)]
 pub struct Node {
     pub id: String,
-    /// `host.label || host.id`, what the label above the sphere says.
+    /// The host's label, or its id when it has none: what the label above
+    /// the sphere says.
     pub label: String,
     pub key: ColorKey,
     pub radius: f32,
@@ -137,7 +138,7 @@ pub struct Graph {
     pub drawn: bool,
 }
 
-/// An axis-aligned box (`THREE.Box3`), empty until a point is added.
+/// An axis-aligned box, empty until a point is added.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Bounds {
     pub min: Vec3,
@@ -221,8 +222,8 @@ fn setup_assets(
     });
 }
 
-/// `Graph.update(doc)`: despawn every node, spawn the new ones, resolve links,
-/// recompute the bounds. Runs only when the document resource changed.
+/// Despawn every node, spawn the new ones, resolve links and recompute the
+/// bounds. Runs only when the document resource changed.
 fn rebuild(
     mut commands: Commands,
     doc: Res<MapDocument>,
@@ -274,7 +275,7 @@ fn rebuild(
             next.links.push((*a, *b));
         }
     }
-    // `computeBounds`: a point box for an empty map, then room for the spheres
+    // The bounds: a point box for an empty map, then room for the spheres
     // themselves and for the labels above the top row.
     if next.bounds.is_empty() {
         next.bounds = Bounds {
@@ -290,8 +291,8 @@ fn rebuild(
     *graph = next;
 }
 
-/// Hover and selection look (`setState` in graph.js): brighter material,
-/// slightly bigger sphere. A handle swap, not a material clone.
+/// Hover and selection look: brighter material, slightly bigger sphere. A
+/// handle swap, not a material clone.
 pub fn set_state(
     assets: &GraphAssets,
     node: &mut Node,

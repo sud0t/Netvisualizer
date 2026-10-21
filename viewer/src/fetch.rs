@@ -1,9 +1,8 @@
-//! Live mode: follow a running `python -m pynmapper` map server. Port of
-//! `poll()` and `loadMap()` in app.js.
+//! Live mode: follow a running `python -m pynmapper` map server.
 //!
 //! A plain thread asks `/api/health` for the revision every two seconds and
-//! downloads `/api/map` only when it changed, exactly as the page does, so the
-//! viewer can open before a scan has finished and redraws as each stage lands.
+//! downloads `/api/map` only when it changed, so the viewer can open before a
+//! scan has finished and redraws as each stage lands.
 //! Results cross into Bevy over an mpsc channel: no system ever waits on the
 //! network, and no async runtime is involved.
 
@@ -20,7 +19,7 @@ use crate::graph::MapDocument;
 use crate::map::{CONTRACT_VERSION, MapDoc};
 use crate::ui::Status;
 
-/// `POLL_MS` in app.js.
+/// How often the server is asked for its revision.
 pub const POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// A server that takes longer than this to answer counts as unreachable.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -117,7 +116,7 @@ fn poll_loop(base: &str, tx: &Sender<FetchEvent>) {
     }
 }
 
-/// One GET, body as text. Errors read like the page's: `/api/map: HTTP 500`.
+/// One GET, body as text. Errors name the path: `/api/map: HTTP 500`.
 fn get(agent: &ureq::Agent, base: &str, path: &str) -> Result<String, String> {
     let describe = |err: ureq::Error| match err {
         ureq::Error::StatusCode(code) => format!("{path}: HTTP {code}"),
@@ -142,7 +141,7 @@ struct Health {
 /// The polling protocol, apart from the HTTP itself so tests can drive it.
 #[derive(Debug, Default)]
 struct Poller {
-    /// Revision of the map last handed over (`revision` in app.js).
+    /// Revision of the map last handed over.
     drawn: Option<u64>,
     /// The previous poll failed, so the next success must clear the error.
     failing: bool,

@@ -5,8 +5,8 @@
 //! `position` on a host; `source`/`target` on a link). Everything else a host
 //! carries (`ip`, `hostname`, `open_ports`, `extra`, and any field added to
 //! `pynmapper/model.py` later) is kept verbatim in [`Host::fields`], in the
-//! order Python wrote it, so the generic details card can render it the way
-//! panel.js does, with no change here when the backend grows.
+//! order Python wrote it, so the generic details card in panel.rs can render
+//! it with no change here when the backend grows.
 
 use std::error::Error;
 use std::fs;
@@ -15,7 +15,7 @@ use std::path::Path;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 
-/// The newest contract version this viewer understands (`CONTRACT_VERSION` in app.js).
+/// The newest contract version this viewer understands.
 pub const CONTRACT_VERSION: u64 = 1;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -66,7 +66,7 @@ pub struct Host {
     #[serde(default)]
     pub role: Option<String>,
     /// `None` unless the backend sent three finite numbers; graph.rs then
-    /// places the host on the fallback ring, exactly like graph.js.
+    /// places the host on the fallback ring.
     #[serde(default, deserialize_with = "lenient_position")]
     pub position: Option<[f32; 3]>,
     /// Every other key of the host object, in document order.
@@ -86,7 +86,7 @@ pub struct Link {
     pub rest: Map<String, Value>,
 }
 
-/// What a host is in the map. Unknown roles draw as plain hosts (`roleOf` in graph.js).
+/// What a host is in the map. Unknown roles draw as plain hosts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Role {
     Scanner,
@@ -119,7 +119,7 @@ pub enum Status {
 }
 
 impl Host {
-    /// `host.label || host.id` in the JavaScript.
+    /// The host's label, or its id when it has none or it is empty.
     pub fn display_label(&self) -> &str {
         match self.label.as_deref() {
             Some(label) if !label.is_empty() => label,
@@ -132,9 +132,9 @@ impl Host {
     }
 
     /// The Host model has no status field yet. Until it does, "down" is read
-    /// from a top-level `status` or from `extra.status` (`statusOf` in graph.js),
-    /// so a backend that starts reporting it in either place greys those nodes
-    /// out with no viewer change.
+    /// from a top-level `status` or from `extra.status`, so a backend that
+    /// starts reporting it in either place greys those nodes out with no
+    /// viewer change.
     pub fn status(&self) -> Status {
         let top_level = self.fields.get("status").filter(|v| !v.is_null());
         let in_extra = || {
@@ -158,7 +158,7 @@ impl MapDoc {
         Ok(MapDoc::from_json(&fs::read_to_string(path)?)?)
     }
 
-    /// One line for the HUD / window title (`summarise` in app.js):
+    /// One line for the HUD / window title:
     /// `ping_sweep 192.168.1.0/24 · sweeping… · 12 hosts · 11 links · rev 3`.
     pub fn summary(&self) -> String {
         let place: Vec<&str> = [self.scan.kind.as_deref(), self.scan.network.as_deref()]
@@ -316,7 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn summary_matches_the_web_status_line() {
+    fn summary_reads_kind_network_counts_and_revision() {
         let doc = MapDoc::from_json(DEMO).unwrap();
         assert_eq!(
             doc.summary(),

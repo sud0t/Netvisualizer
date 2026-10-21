@@ -1,13 +1,14 @@
 """Command line for developing and inspecting the graphics layer.
 
-    python -m pynmapper.graphics --demo                 # fake LAN, opens the browser
+    python -m pynmapper.graphics --demo                 # serve a fake LAN until Ctrl-C
     python -m pynmapper.graphics --demo --count 60      # bigger fake LAN
     python -m pynmapper.graphics --json scan.json       # replay a saved map
-    python -m pynmapper.graphics --demo --save scan.json --no-browser
+    python -m pynmapper.graphics --demo --save scan.json
     python -m pynmapper.graphics --demo --dump          # print the JSON and exit
 
-The real entry point (``python -m pynmapper``) builds a map from a scan and
-calls :func:`pynmapper.graphics.serve` instead.
+Nothing is opened: follow the served map with ``cargo run --features dev`` in
+``viewer/``. The real entry point (``python -m pynmapper``) builds a map from a
+scan, serves it the same way and starts the release viewer itself.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from .server import DEFAULT_HOST, DEFAULT_PORT, MapServer
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m pynmapper.graphics",
-        description="Serve a network map to the browser frontend.",
+        description="Serve a network map for the native viewer to follow.",
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--demo", action="store_true", help="serve a generated fake LAN")
@@ -38,7 +39,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--host", default=DEFAULT_HOST, help=f"bind address (default {DEFAULT_HOST})")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port (default {DEFAULT_PORT}, 0 = any free)")
-    parser.add_argument("--no-browser", action="store_true", help="do not open a browser tab")
     parser.add_argument("--save", type=Path, metavar="FILE", help="also write the map JSON to FILE")
     parser.add_argument("--dump", action="store_true", help="print the map JSON to stdout and exit")
     parser.add_argument("-v", "--verbose", action="store_true", help="log every HTTP request")
@@ -78,8 +78,6 @@ def main(argv: list[str] | None = None) -> int:
 
     server = MapServer(net_map, host=args.host, port=args.port).start()
     print(f"Pynmapper map: {server.url}  ({len(net_map)} hosts, Ctrl-C to stop)", flush=True)
-    if not args.no_browser:
-        server.open_browser()
     server.serve_forever()
     return 0
 

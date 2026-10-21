@@ -1,14 +1,15 @@
-"""Serve a :class:`NetworkMap` and the static frontend over HTTP, stdlib only.
+"""Serve a :class:`NetworkMap` over HTTP as JSON, stdlib only.
 
-The browser fetches two things:
+The native viewer (``viewer/``) polls two endpoints:
 
-- ``/api/map``   the current map as JSON (see ``graphics.model``), with a
-                 ``revision`` number that goes up on every :meth:`MapServer.update`
-                 so a polling page knows when to redraw;
-- ``/…``         files from ``graphics/web/`` (``/`` is ``index.html``).
+- ``/api/health``  ``{"ok": true, "revision": N}``, cheap enough to ask every 2 s;
+- ``/api/map``     the current map as JSON (see ``graphics.model``), with a
+                   ``revision`` number that goes up on every :meth:`MapServer.update`
+                   so the viewer knows when to download it again and redraw.
 
-Everything is served from 127.0.0.1 by default, because the map describes the
-user's network; pass ``host="0.0.0.0"`` to let other machines look at it.
+Any other path is a 404. Everything is served from 127.0.0.1 by default,
+because the map describes the user's network; pass ``host="0.0.0.0"`` to let
+a viewer on another machine follow it.
 """
 
 from __future__ import annotations
@@ -17,18 +18,15 @@ import errno
 import json
 import logging
 import threading
-import webbrowser
 from functools import partial
 from http import HTTPStatus
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 from .model import NetworkMap
 
 log = logging.getLogger(__name__)
 
-WEB_DIR = Path(__file__).resolve().parent / "web"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 
@@ -39,9 +37,8 @@ class MapServer:
     ::
 
         server = MapServer(net_map).start()
-        server.open_browser()
         ...                       # later, after another scan:
-        server.update(new_map)    # bumps the revision, browser redraws
+        server.update(new_map)    # bumps the revision, the viewer redraws
         server.stop()
 
     ``port=0`` picks any free port. With ``fallback_to_free_port`` (the
@@ -53,12 +50,10 @@ class MapServer:
         net_map: NetworkMap | None = None,
         host: str = DEFAULT_HOST,
         port: int = DEFAULT_PORT,
-        web_dir: str | Path = WEB_DIR,
         fallback_to_free_port: bool = True,
     ) -> None:
         self.host = host
         self.port = port
-        self.web_dir = Path(web_dir)
         self.fallback_to_free_port = fallback_to_free_port
         self._lock = threading.Lock()
         self._map = net_map if net_map is not None else NetworkMap()
@@ -80,7 +75,7 @@ class MapServer:
 
         The revision continues from the map being replaced, so a caller that
         builds a fresh map for every stage of a scan (revision 0 each time)
-        still produces 1, 2, 3, ... and the polling page notices every update.
+        still produces 1, 2, 3, ... and the polling viewer notices every update.
         """
         with self._lock:
             if bump:
@@ -109,9 +104,7 @@ class MapServer:
     def start(self) -> MapServer:
         if self.running:
             return self
-        if not self.web_dir.is_dir():
-            raise FileNotFoundError(f"frontend directory not found: {self.web_dir}")
-        handler = partial(_Handler, self, directory=str(self.web_dir))
+        handler = partial(_Handler, self)
         try:
             self._httpd = ThreadingHTTPServer((self.host, self.port), handler)
         except OSError as exc:
@@ -137,9 +130,6 @@ class MapServer:
             self._thread.join(timeout=5)
             self._thread = None
 
-    def open_browser(self) -> bool:
-        return webbrowser.open(self.url)
-
     def serve_forever(self) -> None:
         """Start (if needed) and block until Ctrl-C."""
         self.start()
@@ -159,8 +149,8 @@ class MapServer:
         self.stop()
 
 
-class _Handler(SimpleHTTPRequestHandler):
-    """Static files from ``web_dir`` plus the ``/api/`` endpoints."""
+class _Handler(BaseHTTPRequestHandler):
+    """The two ``/api/`` endpoints; any other path is a 404."""
 
     def __init__(self, map_server: MapServer, *args, **kwargs) -> None:
         self.map_server = map_server
@@ -173,10 +163,8 @@ class _Handler(SimpleHTTPRequestHandler):
         elif path == "/api/health":
             body = json.dumps({"ok": True, "revision": self.map_server.revision}).encode()
             self._send_bytes(body, "application/json")
-        elif path.startswith("/api/"):
-            self.send_error(HTTPStatus.NOT_FOUND, "no such endpoint")
         else:
-            super().do_GET()
+            self.send_error(HTTPStatus.NOT_FOUND, "no such endpoint")
 
     def _send_bytes(self, body: bytes, content_type: str) -> None:
         self.send_response(HTTPStatus.OK)
@@ -186,23 +174,10 @@ class _Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def end_headers(self) -> None:
-        # Development server: never let the browser cache the map or the page.
+        # The map changes behind the same URL, so nothing may cache it.
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         log.debug("%s %s", self.address_string(), format % args)
 
-
-def serve(
-    net_map: NetworkMap,
-    host: str = DEFAULT_HOST,
-    port: int = DEFAULT_PORT,
-    open_browser: bool = True,
-) -> None:
-    """Convenience for the entry point: serve ``net_map``, open the browser, block until Ctrl-C."""
-    server = MapServer(net_map, host=host, port=port).start()
-    print(f"Pynmapper map: {server.url}  (Ctrl-C to stop)", flush=True)
-    if open_browser:
-        server.open_browser()
-    server.serve_forever()

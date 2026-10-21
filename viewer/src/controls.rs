@@ -1,6 +1,5 @@
 //! Fly camera. W/A/S/D move, Q/E go down/up, Shift is fast, hold the right
-//! mouse button to look around, the mouse wheel changes the speed. Port of
-//! controls.js.
+//! mouse button to look around, the mouse wheel changes the speed.
 //!
 //! This module also owns the camera tweens behind "fly to host" (F, double
 //! click, host list) and "reset view" (R), so exactly one thing ever moves the
@@ -26,8 +25,8 @@ const MOVE_KEYS: [KeyCode; 6] = [
     KeyCode::KeyE,
 ];
 const FAST_KEYS: [KeyCode; 2] = [KeyCode::ShiftLeft, KeyCode::ShiftRight];
-/// `e.ctrlKey || e.metaKey || e.altKey`: with one of these held a key is a
-/// shortcut for someone else (Ctrl+S, Alt+Tab), never a fly key.
+/// Ctrl, Alt and Super: with one of these held a key is a shortcut for
+/// someone else (Ctrl+S, Alt+Tab), never a fly key.
 const COMMAND_MODIFIERS: [KeyCode; 6] = [
     KeyCode::ControlLeft,
     KeyCode::ControlRight,
@@ -39,20 +38,22 @@ const COMMAND_MODIFIERS: [KeyCode; 6] = [
 /// Never quite straight up or down.
 const PITCH_LIMIT: f32 = FRAC_PI_2 - 0.02;
 /// A single motion event bigger than this is a glitch, not a hand movement.
-/// Checked per event, as controls.js does: a frame's total can legitimately
+/// Checked per event, not per frame: a frame's total can legitimately
 /// exceed it during a quick turn on a slow frame.
 const MAX_LOOK_DELTA_PX: f32 = 300.0;
 /// y of the approach direction: never fly in from below.
 const MIN_FLY_ELEVATION: f32 = 0.2;
-/// A browser wheel notch is about this many pixels of `deltaY`; Bevy reports
-/// notches as whole lines, so the speed curve is kept in pixel terms.
+/// Pixels of wheel travel per notch. Bevy reports a mouse wheel in lines and
+/// a touchpad in pixels; the speed curve works in pixels, so a line counts
+/// as this many.
 const WHEEL_LINE_PX: f32 = 100.0;
-/// Speed change per pixel of wheel travel (`Math.exp(-deltaY * 0.0015)`).
+/// Speed change per pixel of wheel travel: one notch multiplies the speed by
+/// e^0.15, about 1.16.
 const WHEEL_RATE: f32 = 0.0015;
-/// The browser clamps a frame's dt after a hidden tab; same here after a stall.
+/// A frame's dt is clamped to this, so the camera does not jump after a stall.
 const MAX_DT: f32 = 0.1;
 
-/// `DEFAULTS` plus the live state of controls.js's `FlyControls`.
+/// The fly camera's settings and live state.
 #[derive(Resource, Debug, Clone)]
 pub struct FlyControls {
     /// False while something else owns the input (nothing does yet).
@@ -101,7 +102,7 @@ impl Default for FlyControls {
     }
 }
 
-/// A glide from one camera pose to another (`tweenTo` in controls.js).
+/// A glide from one camera pose to another.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tween {
     pub from: (Vec3, Quat),
@@ -257,7 +258,7 @@ impl Plugin for ControlsPlugin {
     }
 }
 
-/// `onKeyDown`: a movement key takes the camera away from any tween.
+/// A movement key takes the camera away from any tween.
 fn read_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     ui: Res<UiInput>,
@@ -273,8 +274,8 @@ fn read_keyboard(
     }
 }
 
-/// Right button held = look. The cursor is locked and hidden meanwhile, which
-/// is what `requestPointerLock` did in the browser: no screen edge to hit.
+/// Right button held = look. The cursor is locked and hidden meanwhile, so
+/// there is no screen edge to hit.
 /// (Bevy falls back to confining the cursor where locking is unsupported, X11.)
 fn mouse_look(
     buttons: Res<ButtonInput<MouseButton>>,
@@ -291,7 +292,7 @@ fn mouse_look(
         cursor.grab_mode = CursorGrabMode::Locked;
         cursor.visible = false;
     }
-    // Losing focus drops the button release, as Escape did with pointer lock.
+    // Losing focus can swallow the button release, so it ends the look too.
     if controls.looking && (!buttons.pressed(MouseButton::Right) || !window.focused) {
         controls.looking = false;
         cursor.grab_mode = CursorGrabMode::None;
@@ -307,7 +308,7 @@ fn mouse_look(
     }
 }
 
-/// `onWheel`: scrolling up speeds up, scrolling down slows down, exponentially.
+/// Scrolling up speeds up, scrolling down slows down, exponentially.
 fn mouse_wheel(
     scroll: Res<AccumulatedMouseScroll>,
     ui: Res<UiInput>,
@@ -320,12 +321,12 @@ fn mouse_wheel(
         MouseScrollUnit::Line => scroll.delta.y * WHEEL_LINE_PX,
         MouseScrollUnit::Pixel => scroll.delta.y,
     };
-    // Browser deltaY is positive scrolling down; Bevy's y is positive scrolling up.
+    // Bevy's y is positive scrolling up, so scrolling up multiplies by more than 1.
     let speed = controls.speed * (pixels * WHEEL_RATE).exp();
     controls.set_speed(speed);
 }
 
-/// `update(dt)`: step the tween if there is one, else fly with damping.
+/// Step the tween if there is one, else fly with damping.
 /// Keys typed into the filter box (or pressed with Ctrl/Alt/Super) count as
 /// released, so the camera coasts to a stop instead of flying off.
 fn move_camera(

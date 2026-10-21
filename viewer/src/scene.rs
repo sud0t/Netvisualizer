@@ -1,4 +1,4 @@
-//! Camera, lights, fog, the grid floor and framing. Port of scene.js.
+//! Camera, lights, fog, the grid floor and framing.
 //! Nothing here knows about hosts; graph.rs puts the network into the world
 //! and this module only reads its bounds.
 
@@ -13,7 +13,7 @@ use crate::graph::{Bounds, Graph};
 use crate::panel::Panel;
 use crate::theme;
 
-/// Elevated, looking in from +z (`DEFAULT_VIEW_DIR`); normalised where used.
+/// Where the camera looks in from: elevated, from +z. Normalised where used.
 pub const DEFAULT_VIEW_DIR: Vec3 = Vec3::new(0.0, 0.55, 1.0);
 /// World units; keeps a one-host map from filling the screen.
 const MIN_FRAME_SIZE: f32 = 12.0;
@@ -31,8 +31,8 @@ const FOV_DEGREES: f32 = 60.0;
 #[derive(Component)]
 pub struct MainCamera;
 
-/// Fog distances in world units. The grid fade follows them (`uFade` in the
-/// floor shader) and the labels of step 7.2 fade over the same range.
+/// Fog distances in world units. The grid's lines and the labels fade out
+/// over the same range.
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct SceneSettings {
     pub fog_near: f32,
@@ -48,7 +48,7 @@ impl Default for SceneSettings {
     }
 }
 
-/// Pixels per edge hidden under HTML / egui panels (`inset` in scene.js).
+/// Pixels per edge hidden under the egui panels.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Inset {
     pub left: f32,
@@ -72,8 +72,8 @@ pub struct ScenePlugin;
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ClearColor(theme::SCENE_BG))
-            // HemisphereLight(0xbfd4ff, 0x141a26, 1.4) in the browser; Bevy has a
-            // single ambient colour, so the sky tint is used.
+            // A pale sky-blue ambient light, so the sides of the spheres that
+            // face away from the sun are lit too.
             .insert_resource(GlobalAmbientLight {
                 color: Color::srgb_u8(0xbf, 0xd4, 0xff),
                 brightness: 400.0,
@@ -103,9 +103,9 @@ fn setup(mut commands: Commands) {
             far: 2000.0,
             ..default()
         }),
-        // The web page renders without tone mapping; match it so the role
-        // colours come out as the swatches in style.css. Debanding only works
-        // after tone mapping, so it is off too (Bevy warns about the pair otherwise).
+        // No tone mapping, so the role colours on the spheres come out as the
+        // swatches in the legend and the host list. Debanding only works after
+        // tone mapping, so it is off too (Bevy warns about the pair otherwise).
         Tonemapping::None,
         DebandDither::Disabled,
         Transform::from_xyz(0.0, 20.0, 38.0).looking_at(Vec3::ZERO, Vec3::Y),
@@ -120,7 +120,8 @@ fn setup(mut commands: Commands) {
         },
     ));
 
-    // DirectionalLight(0xffffff, 1.8) at (14, 30, 18); Bevy wants lux.
+    // The sun, from above and to one side; 6000 lux was tuned by eye on the
+    // demo map.
     commands.spawn((
         DirectionalLight {
             color: Color::WHITE,
@@ -133,18 +134,18 @@ fn setup(mut commands: Commands) {
 
 fn configure_gizmos(mut store: ResMut<GizmoConfigStore>) {
     let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
-    config.line.width = 1.5; // pixels; the browser draws 1 px GL lines
+    config.line.width = 1.5; // pixels: thin grid and link lines
 }
 
-/// `framed` in app.js: the first map is framed instantly; later maps glide to
-/// a new framing only while the user has not taken the camera themselves.
+/// Whether a map has been framed yet: the first map is framed instantly;
+/// later maps glide to a new framing only while the user has not taken the
+/// camera themselves.
 #[derive(Resource, Debug, Default)]
 pub struct ViewState {
     pub framed: bool,
 }
 
-/// Ask for the map to be re-framed (`resetView` in app.js). R sends it with
-/// `animate: true`.
+/// Ask for the map to be re-framed. R sends it with `animate: true`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ResetView {
     pub animate: bool,
@@ -212,7 +213,7 @@ fn frame_when_needed(
 }
 
 /// Put the camera where a [`Framing`] says, instantly or as a glide. Fog, far
-/// plane and grid fade change at once either way, as `scene.frame()` does.
+/// plane and grid fade change at once either way.
 pub fn apply_framing(
     framing: &Framing,
     animate: bool,
@@ -243,9 +244,9 @@ pub fn apply_framing(
 }
 
 /// Move the camera back along `direction` until every corner of `bounds` is
-/// inside the view frustum (`frame` in scene.js). Fitting the box rather than
-/// its bounding sphere matters because a LAN laid out on rings is a flat disc:
-/// seen from above it needs far less distance than a sphere would.
+/// inside the view frustum. Fitting the box rather than its bounding sphere
+/// matters because a LAN laid out on rings is a flat disc: seen from above it
+/// needs far less distance than a sphere would.
 /// `inset` excludes parts of the viewport hidden under panels, so the map is
 /// fitted and centred in what is visible. Fog starts just past the far side of
 /// the map so the map itself stays crisp and only the grid fades out.
@@ -270,7 +271,7 @@ pub fn frame_camera(
 
     // The usable region in pixels, measured from the left and from the bottom.
     // Absurd insets (a sidebar wider than the window) are clamped so at least
-    // 30 % of each axis is always used, as in scene.js.
+    // 30 % of each axis is always used.
     let (x0, x1) = usable_span(inset.left, width - inset.right, width);
     let (y0, y1) = usable_span(inset.bottom, height - inset.top, height);
 
@@ -302,9 +303,8 @@ pub fn frame_camera(
     // any distance. A corner is visible when, seen from the camera, it lies
     // between the left and right edges (and the bottom and top edges) of that
     // region; each edge gives a lower bound on the distance.
-    // scene.js instead slides the target by a pixel offset measured at the box
-    // centre's depth, which lets near corners poke out under a wide sidebar;
-    // without insets the two formulas are identical.
+    // (Sliding the target by a pixel offset measured at the box centre's depth
+    // is simpler, but lets near corners poke out under a wide sidebar.)
     let mut distance: f32 = 0.0;
     for i in 0..8 {
         let corner = Vec3::new(
@@ -352,8 +352,8 @@ fn usable_span(lo: f32, hi: f32, full: f32) -> (f32, f32) {
 /// The floor: an "infinite" grid that follows the camera, drawn as gizmo line
 /// strips whose alpha fades with distance like the fog. Minor lines every
 /// cell, brighter major lines every five, the two axes in their own colour.
-/// (The browser draws this in a fragment shader because Chrome drops GL lines
-/// that cross the near plane; Bevy's gizmo lines are quads, so they are fine.)
+/// (Gizmo lines are drawn as quads, so a line that crosses the near plane
+/// still draws; some GL implementations drop raw line primitives there.)
 fn draw_grid(
     settings: Res<SceneSettings>,
     camera: Single<&Transform, With<MainCamera>>,
@@ -409,7 +409,7 @@ fn draw_grid(
     }
 }
 
-/// `THREE.MathUtils.smoothstep`: 0 below `edge0`, 1 above `edge1`, an S-curve between.
+/// The usual smoothstep: 0 below `edge0`, 1 above `edge1`, an S-curve between.
 pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     if edge1 <= edge0 {
         return if x < edge0 { 0.0 } else { 1.0 };
@@ -577,7 +577,7 @@ mod tests {
     }
 
     #[test]
-    fn smoothstep_matches_three() {
+    fn smoothstep_clamps_and_eases() {
         assert_eq!(smoothstep(60.0, 160.0, 10.0), 0.0);
         assert_eq!(smoothstep(60.0, 160.0, 200.0), 1.0);
         assert!((smoothstep(0.0, 1.0, 0.5) - 0.5).abs() < 1e-6);

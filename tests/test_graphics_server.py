@@ -1,11 +1,9 @@
-"""Tests for pynmapper.graphics.server: /api/map, revisions, static files."""
+"""Tests for pynmapper.graphics.server: /api/map, /api/health, revisions."""
 
 import json
-import tempfile
 import unittest
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 from pynmapper.graphics import MapServer, NetworkMap, demo_map
 
@@ -59,11 +57,12 @@ class MapServerTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 404)
         ctx.exception.close()
 
-    def test_index_is_served(self):
-        status, headers, body = get(self.base)
-        self.assertEqual(status, 200)
-        self.assertTrue(headers["Content-Type"].startswith("text/html"))
-        self.assertIn(b"<!doctype html>", body.lower())
+    def test_only_the_api_is_served(self):
+        for path in ("", "index.html", "app.js"):
+            with self.subTest(path=path), self.assertRaises(urllib.error.HTTPError) as ctx:
+                get(self.base + path)
+            self.assertEqual(ctx.exception.code, 404)
+            ctx.exception.close()
 
     def test_stop_then_start_again(self):
         self.server.stop()
@@ -93,11 +92,6 @@ class MapServerSetup(unittest.TestCase):
         finally:
             first.stop()
 
-    def test_missing_web_dir_is_an_error(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(FileNotFoundError):
-                MapServer(web_dir=Path(tmp) / "missing").start()
-
     def test_context_manager(self):
         with MapServer(port=0) as server:
             self.assertTrue(server.running)
@@ -107,7 +101,7 @@ class MapServerSetup(unittest.TestCase):
 class RevisionTests(unittest.TestCase):
     def test_fresh_maps_still_get_increasing_revisions(self):
         # __main__ builds a brand new NetworkMap (revision 0) after every scan
-        # stage; the browser only reloads when the revision changes.
+        # stage; the viewer only reloads when the revision changes.
         server = MapServer(NetworkMap())
         seen = []
         for _ in range(3):

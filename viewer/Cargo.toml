@@ -2,7 +2,7 @@
 name = "pynmapper-viewer"
 version = "0.1.0"
 edition = "2024"
-description = "Native viewer for Pynmapper network maps (Bevy); reads the same JSON the web page does"
+description = "Native viewer for Pynmapper network maps (Bevy); reads the JSON map the Python side serves or saves"
 license = "MIT"
 publish = false
 
@@ -22,7 +22,7 @@ bevy = { version = "0.20.0", features = ["wayland", "png"] }
 bevy_egui = { version = "0.43.1", default-features = false, features = ["render", "default_fonts", "manage_clipboard"] }
 serde = { version = "1.0", features = ["derive"] }
 # preserve_order keeps host fields in the order Python wrote them, so the
-# generic details card lists them like panel.js does (Object.entries order).
+# generic details card lists them in that order too.
 serde_json = { version = "1.0", features = ["preserve_order"] }
 clap = { version = "4.6", features = ["derive"] }
 # Same wgpu Bevy renders with; used directly only to probe for a GPU adapter

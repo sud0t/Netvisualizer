@@ -1,8 +1,7 @@
-//! The egui layer over the 3D view: host labels drawn with the painter (the
-//! CSS2D labels of graph.js and `.label` in style.css), the HUD, the legend
-//! and the help overlay (the HTML in index.html), the sidebar from panel.rs,
-//! and the [`UiInput`] flags that tell controls and picking when egui owns the
-//! pointer or keyboard.
+//! The egui layer over the 3D view: host labels drawn with the painter, the
+//! HUD, the legend and the help overlay, the sidebar from panel.rs, and the
+//! [`UiInput`] flags that tell controls and picking when egui owns the pointer
+//! or keyboard.
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
@@ -15,19 +14,20 @@ use crate::picking::Picker;
 use crate::scene::{MainCamera, SceneSettings, smoothstep};
 use crate::theme;
 
-/// `--font` is 14 px, `--mono` 12 px.
+/// Body text is 14 px, monospace 12 px.
 pub const BODY_PX: f32 = 14.0;
 pub const MONO_PX: f32 = 12.0;
-/// `.label` has `padding: 2px 7px; border-radius: 4px`.
+/// A label's box: 7 px of padding beside the text, 2 px above and below, and
+/// 4 px corners.
 const LABEL_PADDING: egui::Vec2 = egui::vec2(7.0, 2.0);
 const LABEL_ROUNDING: f32 = 4.0;
 /// Labels fainter than this are not worth a draw call.
 const MIN_LABEL_OPACITY: f32 = 0.01;
-/// `#hud`, `#legend`: 12 px from the window edges.
+/// The HUD and the legend sit 12 px from the window edges.
 const EDGE: f32 = 12.0;
 
-/// What egui wants this frame: `isTypingTarget` and "pointer over the
-/// sidebar" in the browser, where the DOM sorted this out for free.
+/// What egui wants this frame, so the 3D controls and picking stay out of its
+/// way.
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct UiInput {
     /// The pointer is over an egui panel or egui is dragging something.
@@ -36,13 +36,13 @@ pub struct UiInput {
     pub keyboard: bool,
 }
 
-/// `setStatus(text, state)` in app.js: the HUD's status line.
+/// The HUD's status line.
 #[derive(Resource, Debug, Clone, PartialEq, Eq)]
 pub struct Status {
     pub text: String,
-    /// `data-state="error"`: drawn in the error colour.
+    /// Drawn in the error colour.
     pub error: bool,
-    /// The last map summary, shown again once the server is back (`lastSummary`).
+    /// The last map summary, shown again once the server is back.
     summary: String,
 }
 
@@ -76,8 +76,8 @@ impl Status {
     }
 }
 
-/// `#help`: the controls overlay (`?`, `h`, the HUD button; Escape or a click
-/// on the backdrop closes it).
+/// The help overlay with the controls (`?`, `h`, the HUD button; Escape or a
+/// click on the backdrop closes it).
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Help {
     pub open: bool,
@@ -108,8 +108,9 @@ impl Plugin for UiPlugin {
     }
 }
 
-/// `.dot`, `.swatch`: the role colours (unknown roles and down hosts use the
-/// host colour there; only the 3D spheres turn grey).
+/// The role colours of the host list's dots and the legend's swatches
+/// (unknown roles and down hosts use the host colour there; only the 3D
+/// spheres turn grey).
 pub fn role_color(role: Role) -> Color {
     match role {
         Role::Scanner => theme::ROLE_SCANNER,
@@ -118,14 +119,14 @@ pub fn role_color(role: Role) -> Color {
     }
 }
 
-/// Text in the page's body font.
+/// Body text: proportional, 14 px.
 pub fn text(s: &str, color: Color) -> egui::RichText {
     egui::RichText::new(s)
         .size(BODY_PX)
         .color(egui_color(color, 1.0))
 }
 
-/// Text in `--mono`.
+/// Monospace text, 12 px.
 pub fn mono(s: &str, color: Color) -> egui::RichText {
     egui::RichText::new(s)
         .family(egui::FontFamily::Monospace)
@@ -133,7 +134,7 @@ pub fn mono(s: &str, color: Color) -> egui::RichText {
         .color(egui_color(color, 1.0))
 }
 
-/// `#speed`: one decimal below 10 u/s, whole numbers above.
+/// The fly speed in the HUD: one decimal below 10 u/s, whole numbers above.
 pub fn speed_text(speed: f32) -> String {
     if speed < 10.0 {
         format!("{speed:.1} u/s")
@@ -142,20 +143,20 @@ pub fn speed_text(speed: f32) -> String {
     }
 }
 
-/// The parts of style.css that egui needs to know once: font sizes, button
-/// and text box looks, tooltips. Applied on the first egui pass.
+/// The viewer's look, set once on the first egui pass: font sizes, button and
+/// text box looks, tooltips.
 fn apply_style(mut contexts: EguiContexts, mut done: Local<bool>) -> Result {
     if *done {
         return Ok(());
     }
     let ctx = contexts.ctx_mut()?;
     ctx.set_theme(egui::Theme::Dark);
-    ctx.all_styles_mut(style_like_the_page);
+    ctx.all_styles_mut(viewer_style);
     *done = true;
     Ok(())
 }
 
-pub fn style_like_the_page(style: &mut egui::Style) {
+pub fn viewer_style(style: &mut egui::Style) {
     use egui::{FontFamily, FontId, TextStyle};
     style.text_styles = [
         (
@@ -198,7 +199,7 @@ pub fn style_like_the_page(style: &mut egui::Style) {
         &mut visuals.widgets.active,
         &mut visuals.widgets.open,
     ] {
-        // `button { border: 1px solid var(--hud-border); border-radius: 6px }`
+        // Buttons: a 1 px border in the panel border colour, 6 px corners.
         widget.corner_radius = 6.into();
         widget.bg_stroke = border;
         widget.fg_stroke.color = text_color;
@@ -208,18 +209,18 @@ pub fn style_like_the_page(style: &mut egui::Style) {
     visuals.widgets.inactive.bg_fill = egui::Color32::TRANSPARENT;
     visuals.widgets.hovered.weak_bg_fill = egui_color(theme::ROW_HOVER, 1.0);
     visuals.widgets.active.weak_bg_fill = egui_color(theme::ROW_HOVER, 2.0);
-    // `input:focus { border-color: var(--accent) }` and the text selection.
+    // A focused text box gets an accent border; selected text an accent tint.
     visuals.selection.stroke = egui::Stroke::new(1.0, egui_color(theme::ACCENT, 1.0));
     visuals.selection.bg_fill = egui_color(theme::ACCENT, 0.35);
     visuals.extreme_bg_color = egui_color(theme::INPUT_BG, 1.0);
     visuals.faint_bg_color = egui_color(theme::ROW_HOVER, 1.0); // table stripes
-    // Tooltips (the `title` attribute on the page).
+    // Tooltips.
     visuals.window_fill = egui_color(theme::HUD_BG_SOLID, 1.0);
     visuals.window_stroke = border;
     visuals.window_corner_radius = 6.into();
 }
 
-/// `#hud`: brand, status line, speed, help button. Top left.
+/// The HUD: brand, status line, speed, help button. Top left.
 fn draw_hud(
     mut contexts: EguiContexts,
     status: Res<Status>,
@@ -247,7 +248,7 @@ fn draw_hud(
                             theme::MUTED
                         };
                         ui.add(egui::Label::new(mono(&status.text, color)).extend());
-                        // `#speed { border-left: 1px solid; padding-left: 12px }`
+                        // A thin rule between the status line and the speed.
                         let (rule, _) =
                             ui.allocate_exact_size(egui::vec2(1.0, 16.0), egui::Sense::hover());
                         ui.painter().vline(
@@ -272,7 +273,7 @@ fn draw_hud(
     Ok(())
 }
 
-/// `#legend`: what the colours mean. Bottom left, ignores the pointer.
+/// The legend: what the colours mean. Bottom left, ignores the pointer.
 fn draw_legend(mut contexts: EguiContexts) -> Result {
     let ctx = contexts.ctx_mut()?;
     egui::Area::new(egui::Id::new("legend"))
@@ -306,13 +307,13 @@ fn draw_legend(mut contexts: EguiContexts) -> Result {
     Ok(())
 }
 
-/// What triggers an action in the help table: keys (drawn as `<kbd>`) or a mouse gesture.
+/// What triggers an action in the help table: keys (drawn as key caps) or a mouse gesture.
 enum Trigger {
     Keys(&'static [&'static str]),
     Mouse(&'static str),
 }
 
-/// The table in `#help`, row for row.
+/// The rows of the help table.
 const HELP_ROWS: [(Trigger, &str); 12] = [
     (
         Trigger::Keys(&["W", "A", "S", "D"]),
@@ -334,7 +335,7 @@ const HELP_ROWS: [(Trigger, &str); 12] = [
     (Trigger::Keys(&["?"]), "this help"),
 ];
 
-/// `<kbd>`: a key cap.
+/// A key cap.
 fn kbd(ui: &mut egui::Ui, key: &str) {
     egui::Frame::new()
         .fill(egui_color(theme::INPUT_BG, 1.0))
@@ -344,7 +345,7 @@ fn kbd(ui: &mut egui::Ui, key: &str) {
         .show(ui, |ui| ui.label(mono(key, theme::TEXT)));
 }
 
-/// `#help`: a card over a dimmed backdrop; a click on the backdrop closes it.
+/// The help overlay: a card over a dimmed backdrop; a click on the backdrop closes it.
 /// (Escape is handled with the other keys in main.rs, so it never also deselects.)
 fn draw_help(mut contexts: EguiContexts, mut help: ResMut<Help>) -> Result {
     if !help.open {
@@ -399,7 +400,7 @@ fn draw_help(mut contexts: EguiContexts, mut help: ResMut<Help>) -> Result {
     Ok(())
 }
 
-/// Colours of one label, after the CSS cascade in style.css.
+/// Colours of one label, from its role, hover and selection.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LabelStyle {
     pub text: Color,
@@ -435,13 +436,13 @@ impl LabelStyle {
     }
 }
 
-/// `fadeLabels`: fully visible up to the fog start, gone at the fog end.
+/// A label's opacity: fully visible up to the fog start, gone at the fog end.
 pub fn label_opacity(distance: f32, settings: &SceneSettings) -> f32 {
     1.0 - smoothstep(settings.fog_near, settings.fog_far, distance)
 }
 
-/// A Bevy colour as egui sees it, with the whole label's opacity folded in
-/// (CSS `opacity` scales background, border and text alike).
+/// A Bevy colour as egui sees it, with the whole label's opacity folded in,
+/// so a fading label's background, border and text fade alike.
 pub fn egui_color(color: Color, opacity: f32) -> egui::Color32 {
     let c = color.to_srgba();
     let channel = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -454,9 +455,8 @@ pub fn egui_color(color: Color, opacity: f32) -> egui::Color32 {
 }
 
 /// One label per host, bottom-centred just above its sphere, on the layer
-/// under every panel so the sidebar covers labels the way the DOM did.
-/// Painted far to near, so the nearer of two overlapping labels is on top
-/// (CSS2DRenderer's `zOrder`).
+/// under every panel so the sidebar covers labels. Painted far to near, so
+/// the nearer of two overlapping labels is on top.
 fn draw_labels(
     mut contexts: EguiContexts,
     camera: Single<(&Camera, &Transform), With<MainCamera>>,
@@ -478,7 +478,7 @@ fn draw_labels(
         .iter()
         .filter_map(|(entity, node, transform)| {
             let distance = camera_transform.translation.distance(transform.translation);
-            // Child of the sphere in graph.js: a fixed gap above the top of the sphere.
+            // A fixed gap above the top of the sphere.
             let anchor = transform.translation + Vec3::Y * (node.radius + LABEL_GAP);
             let screen = camera.world_to_viewport(&camera_global, anchor).ok()?; // behind the camera
             Some((distance, entity, node, screen))
@@ -502,8 +502,7 @@ fn draw_labels(
     Ok(())
 }
 
-/// Text in a rounded box whose bottom-centre sits at `anchor`
-/// (`CSS2DObject.center = (0.5, 1)`).
+/// Text in a rounded box whose bottom-centre sits at `anchor`.
 fn paint_label(
     painter: &egui::Painter,
     anchor: egui::Pos2,
@@ -534,8 +533,8 @@ fn paint_label(
     painter.galley(rect.min + LABEL_PADDING, galley, text_color);
 }
 
-/// `canvas.style.cursor = "pointer"` while a host is under the pointer. egui
-/// owns the window's cursor icon (bevy_egui applies it), so ask egui for it.
+/// A pointing-hand cursor while a host is under the pointer. egui owns the
+/// window's cursor icon (bevy_egui applies it), so ask egui for it.
 fn pointer_cursor(
     mut contexts: EguiContexts,
     picker: Res<Picker>,
@@ -550,7 +549,7 @@ fn pointer_cursor(
 
 /// Runs after the UI was built for this frame, so the flags are ready for
 /// next frame's controls and picking. Only a focused text box takes the
-/// keyboard (`isTypingTarget`): a button focused with Tab does not stop WASD.
+/// keyboard: a button focused with Tab does not stop WASD.
 fn read_ui_input(mut contexts: EguiContexts, mut ui: ResMut<UiInput>) -> Result {
     let ctx = contexts.ctx_mut()?;
     let next = UiInput {
@@ -623,7 +622,7 @@ mod tests {
     }
 
     #[test]
-    fn speed_reads_like_the_hud_on_the_page() {
+    fn speed_text_has_one_decimal_below_ten() {
         assert_eq!(speed_text(18.0), "18 u/s");
         assert_eq!(speed_text(18.5), "19 u/s");
         assert_eq!(speed_text(9.96), "10.0 u/s");

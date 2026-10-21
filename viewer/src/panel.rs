@@ -1,14 +1,14 @@
 //! Sidebar: a filterable host list and a details card for the selected host.
-//! Port of panel.js. (The HUD, legend and help overlay live in ui.rs.)
+//! (The HUD, legend and help overlay live in ui.rs.)
 //!
 //! The details card is generic on purpose. Apart from a few keys that get a
 //! friendlier heading, every field of the host JSON is rendered as it comes
 //! (scalars as rows, lists of objects as tables, objects as nested rows), so a
 //! field added to pynmapper/model.py shows up here with no viewer change.
 //!
-//! The sidebar is an egui `Area` (a floating card, like `position: fixed` in
-//! style.css) rather than an egui `Panel`, so egui counts the pointer as over
-//! the UI there and clicks never fall through to the 3D view.
+//! The sidebar is an egui `Area` (a floating card) rather than an egui
+//! `Panel`, so egui counts the pointer as over the UI there and clicks never
+//! fall through to the 3D view.
 
 use std::cmp::Ordering;
 
@@ -24,28 +24,29 @@ use crate::scene::Inset;
 use crate::theme;
 use crate::ui::{BODY_PX, MONO_PX, egui_color, mono, role_color, text};
 
-/// `--sidebar-width`, and the narrower one below `NARROW_WINDOW` (`@media (max-width: 720px)`).
+/// Sidebar width, and the narrower one in windows up to `NARROW_WINDOW` wide.
 const SIDEBAR_WIDTH: f32 = 300.0;
 const NARROW_SIDEBAR_WIDTH: f32 = 220.0;
 const NARROW_WINDOW: f32 = 720.0;
-/// `#sidebar { top: 12px; right: 12px; bottom: 12px }`.
+/// Gap between the sidebar and the window's top, right and bottom edges.
 const SIDEBAR_MARGIN: f32 = 12.0;
-/// `padding: 10px` plus the 1 px border, per side.
+/// 10 px of padding plus the 1 px border, per side.
 const SIDEBAR_PADDING: f32 = 10.0 + 1.0;
-/// `gap: 8px` between the head, the details card and the list.
+/// Space between the head, the details card and the list.
 const GAP: f32 = 8.0;
-/// `#hosts li`: 14 px text at line-height 1.4 plus `padding: 5px 8px`.
+/// A host-list row: 14 px text at line-height 1.4, plus 5 px of padding above
+/// and below and 8 px beside.
 const ROW_HEIGHT: f32 = 30.0;
 const ROW_PADDING_X: f32 = 8.0;
 const DOT_SIZE: f32 = 9.0;
-/// `#hosts { min-height: 80px }`.
+/// The host list keeps at least this much height.
 const MIN_LIST_HEIGHT: f32 = 80.0;
-/// `#details { max-height: 55% }` of the sidebar.
+/// The details card takes at most this fraction of the sidebar's height.
 const DETAILS_MAX_FRACTION: f32 = 0.55;
-/// `#details .field { grid-template-columns: 92px 1fr; gap: 4px 10px }`.
+/// A details field: a 92 px key column, then the value 10 px further right.
 const KEY_COLUMN_PX: f32 = 92.0;
 const KEY_GAP: f32 = 10.0;
-/// `HEADINGS` in panel.js: friendlier names for the fields the model has today.
+/// Friendlier names for the fields the model has today.
 fn heading(key: &str) -> String {
     match key {
         "ip" => "IP".to_string(),
@@ -60,17 +61,17 @@ pub fn humanize(key: &str) -> String {
 }
 
 /// One row of the host list: what the list and the filter need, sorted once
-/// per map (`compareHosts`), so the per-frame draw does no work but filtering.
+/// per map by [`compare_rows`], so the per-frame draw does no work but filtering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {
     pub id: String,
-    /// `host.label || host.id`.
+    /// The host's label, or its id when it has none.
     pub label: String,
     /// The validated role, for the dot colour (unknown roles draw as hosts).
     pub role: Role,
-    /// The role string as sent, for sorting and the tooltip (`host.role`).
+    /// The role string as sent, for sorting and the tooltip.
     pub raw_role: String,
-    /// Lower-cased text the filter box matches against (`searchText`).
+    /// Lower-cased text the filter box matches against ([`search_text`]).
     pub search: String,
 }
 
@@ -103,7 +104,7 @@ impl Default for Panel {
 }
 
 impl Panel {
-    /// `setHosts`: a sorted copy of the list.
+    /// Replace the rows with a sorted copy of the map's hosts.
     pub fn set_hosts(&mut self, hosts: &[Host]) {
         let mut rows: Vec<Row> = hosts
             .iter()
@@ -119,12 +120,12 @@ impl Panel {
         self.rows = rows;
     }
 
-    /// The normalised query (`this.query`): trimmed, lower-cased.
+    /// The normalised query: trimmed, lower-cased.
     pub fn query(&self) -> String {
         self.filter.trim().to_lowercase()
     }
 
-    /// `visibleHosts`: every row, or those matching the query.
+    /// Every row, or those matching the query.
     pub fn visible(&self) -> Vec<&Row> {
         let query = self.query();
         self.rows
@@ -133,14 +134,14 @@ impl Panel {
             .collect()
     }
 
-    /// `focusFilter`: `/` opens the sidebar if needed and puts the cursor in the box.
+    /// `/` opens the sidebar if needed and puts the cursor in the filter box.
     pub fn focus_filter(&mut self) {
         self.collapsed = false;
         self.focus_filter = true;
     }
 
-    /// `frameInset()` in app.js: the logical pixels the sidebar hides on the
-    /// right of a window `window_width` logical pixels wide; none while collapsed.
+    /// The logical pixels the sidebar hides on the right of a window
+    /// `window_width` logical pixels wide; none while collapsed.
     pub fn frame_inset(&self, window_width: f32) -> Inset {
         if self.collapsed {
             return Inset::default();
@@ -153,7 +154,7 @@ impl Panel {
     }
 }
 
-/// `--sidebar-width` for a window this many points wide.
+/// The sidebar's width for a window this many points wide.
 pub fn sidebar_width(window_width: f32) -> f32 {
     if window_width <= NARROW_WINDOW {
         NARROW_SIDEBAR_WIDTH
@@ -180,7 +181,8 @@ pub fn address_key(id: &str) -> String {
     }
 }
 
-/// `ROLE_ORDER[a.role] ?? 9`: roles the page does not know sort last.
+/// Sort position of a role: scanner, gateway, host, then roles this viewer
+/// does not know.
 fn role_order(raw_role: &str) -> u8 {
     match raw_role {
         "scanner" => 0,
@@ -190,8 +192,8 @@ fn role_order(raw_role: &str) -> u8 {
     }
 }
 
-/// `compareHosts`: by role, then by address. `localeCompare` ignores case
-/// first, so names do here too, with the exact text as the tie-break.
+/// By role, then by address. Names compare without case first, with the
+/// exact text as the tie-break.
 pub fn compare_rows(a: &Row, b: &Row) -> Ordering {
     let (ka, kb) = (address_key(&a.id), address_key(&b.id));
     role_order(&a.raw_role)
@@ -200,8 +202,8 @@ pub fn compare_rows(a: &Row, b: &Row) -> Ordering {
         .then_with(|| ka.cmp(&kb))
 }
 
-/// `searchText`: label, id, hostname, role and "number/proto" for each port,
-/// skipping the ones that are missing.
+/// What the filter matches: label, id, hostname, role and "number/proto"
+/// for each port, skipping the ones that are missing.
 pub fn search_text(host: &Host) -> String {
     let mut parts: Vec<String> = Vec::new();
     let mut push = |s: &str| {
@@ -227,21 +229,21 @@ pub fn search_text(host: &Host) -> String {
     parts.join(" ").to_lowercase()
 }
 
-/// A JSON scalar as the card shows it (`renderValue` for non-objects).
+/// A JSON scalar as the card shows it.
 pub fn scalar_text(value: &Value) -> String {
     match value {
         Value::Null => "—".to_string(),
         Value::Bool(true) => "yes".to_string(),
         Value::Bool(false) => "no".to_string(),
-        Value::Number(n) => js_number(n),
+        Value::Number(n) => number_text(n),
         Value::String(s) => s.clone(),
         Value::Array(_) | Value::Object(_) => value.to_string(),
     }
 }
 
-/// `String(number)`: JSON has one number type, so Python's `1.0` reads back
-/// as `1` in the browser; print whole floats the same way here.
-fn js_number(n: &serde_json::Number) -> String {
+/// A number as the card shows it. JSON has one number type, so a whole float
+/// such as Python's `1.0` prints as `1`.
+fn number_text(n: &serde_json::Number) -> String {
     match n.as_f64() {
         Some(f) if n.is_f64() && f.fract() == 0.0 && f.abs() < 1e21 => format!("{f:.0}"),
         _ => n.to_string(),
@@ -252,7 +254,7 @@ fn is_plain_object(value: &Value) -> bool {
     value.is_object()
 }
 
-/// `isBlock`: tables and nested objects take the full width below their key.
+/// Tables and nested objects take the full width below their key.
 fn is_block(value: &Value) -> bool {
     match value {
         Value::Array(items) => !items.is_empty() && items.iter().all(is_plain_object),
@@ -270,7 +272,7 @@ impl Plugin for PanelPlugin {
     }
 }
 
-/// `panel.setHosts(doc.hosts)` whenever a new document arrives.
+/// Rebuild the host list whenever a new document arrives.
 fn refresh_rows(doc: Res<MapDocument>, mut panel: ResMut<Panel>) {
     if doc.is_changed()
         && let Some(doc) = &doc.0
@@ -308,7 +310,7 @@ pub fn draw_sidebar(
             card(10).show(ui, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(GAP, GAP);
                 if panel.collapsed {
-                    // `#sidebar.collapsed`: only the toggle, pointing the other way.
+                    // Collapsed: only the toggle, pointing the other way.
                     if toggle_button(ui, true).clicked() {
                         panel.collapsed = false;
                     }
@@ -336,7 +338,7 @@ pub fn draw_sidebar(
     Ok(())
 }
 
-/// The sidebar's frame: `background: var(--hud-bg); border: 1px solid var(--hud-border)`.
+/// The sidebar's frame: panel background, 1 px panel border.
 pub fn card(radius: u8) -> egui::Frame {
     egui::Frame::new()
         .fill(egui_color(theme::HUD_BG, 1.0))
@@ -355,7 +357,7 @@ fn toggle_button(ui: &mut egui::Ui, collapsed: bool) -> egui::Response {
     .on_hover_text("show / hide the host list")
 }
 
-/// `#sidebar-head`: filter box, count, toggle. Enter in the box selects and
+/// The sidebar's head: filter box, count, toggle. Enter in the box selects and
 /// flies to the first match; Escape leaves the box (egui does that itself).
 fn draw_head(ui: &mut egui::Ui, panel: &mut Panel, select: &mut MessageWriter<SelectHost>) {
     let total = panel.rows.len();
@@ -365,7 +367,7 @@ fn draw_head(ui: &mut egui::Ui, panel: &mut Panel, select: &mut MessageWriter<Se
         format!("{} / {total}", panel.visible().len())
     };
     // A row of its own: right-to-left so the box takes what the count and the
-    // toggle leave (`#filter { flex: 1 }`), centred within the row's height.
+    // toggle leave, centred within the row's height.
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             draw_head_row(ui, panel, &count, select);
@@ -392,7 +394,7 @@ fn draw_head_row(
             .margin(egui::Margin::symmetric(9, 5))
             .background_color(egui_color(theme::INPUT_BG, 1.0))
             .text_color(egui_color(theme::TEXT, 1.0))
-            // Keep the focus on Enter, like the search box on the page.
+            // Keep the focus on Enter: the box stays ready for the next query.
             .return_key(None::<egui::KeyboardShortcut>),
     );
     if std::mem::take(&mut panel.focus_filter) {
@@ -411,7 +413,7 @@ fn draw_head_row(
     }
 }
 
-/// `filterInput.select()`: the next keystroke replaces the old query.
+/// Select the whole query, so the next keystroke replaces it.
 fn select_all(ctx: &egui::Context, id: egui::Id, text: &str) {
     use egui::text::{CCursor, CCursorRange};
     let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
@@ -422,7 +424,7 @@ fn select_all(ctx: &egui::Context, id: egui::Id, text: &str) {
     egui::TextEdit::store_state(ctx, id, state);
 }
 
-/// `#hosts`: one row per visible host; click = select + fly. Rows have a
+/// The host list: one row per visible host; click = select + fly. Rows have a
 /// fixed height, so only the ones in view are laid out: a /16 sweep's list
 /// costs the same per frame as a /24's.
 fn draw_list(
@@ -464,7 +466,8 @@ fn draw_list(
                     });
                 }
             }
-            // `li.scrollIntoView({ block: "nearest" })` when the selection changes.
+            // Scroll the selected row into view, no further than needed, when
+            // the selection changes.
             if selection_changed
                 && let Some(i) = rows.iter().position(|r| Some(r.id.as_str()) == selected)
             {
@@ -473,7 +476,7 @@ fn draw_list(
         });
 }
 
-/// `#hosts li`: role dot, name (ellipsised), ip on the right when it differs.
+/// One host-list row: role dot, name (ellipsised), ip on the right when it differs.
 fn draw_row(ui: &mut egui::Ui, rect: egui::Rect, row: &Row, selected: bool) -> egui::Response {
     let response = ui
         .interact(rect, ui.id().with(("host", &row.id)), egui::Sense::click())
@@ -524,7 +527,7 @@ fn draw_row(ui: &mut egui::Ui, rect: egui::Rect, row: &Row, selected: bool) -> e
     response
 }
 
-/// `#details`: header, subtitle, then every field of the host JSON.
+/// The details card: header, subtitle, then every field of the host JSON.
 fn draw_details(
     ui: &mut egui::Ui,
     host: &Host,
@@ -566,8 +569,8 @@ fn draw_details(
         });
 }
 
-/// `header` (name, "fly to", close) and `.sub` (id · role badge). The close
-/// button is "×": the page's "✕" is not in egui's bundled fonts.
+/// The card's header (name, "fly to", close) and subtitle (id · role badge).
+/// The close button is "×" because "✕" is not in egui's bundled fonts.
 fn draw_details_header(ui: &mut egui::Ui, host: &Host, select: &mut MessageWriter<SelectHost>) {
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
         let small = |label: &str| {
@@ -613,7 +616,7 @@ fn draw_details_header(ui: &mut egui::Ui, host: &Host, select: &mut MessageWrite
     });
 }
 
-/// `.field`: a rule on top, then a key column and a value, or the key above a
+/// One field: a rule on top, then a key column and a value, or the key above a
 /// block (table / nested object) that takes the full width.
 fn draw_field(ui: &mut egui::Ui, key: &str, value: &Value) {
     let y = ui.cursor().top();
@@ -643,9 +646,9 @@ fn draw_field(ui: &mut egui::Ui, key: &str, value: &Value) {
     ui.add_space(5.0);
 }
 
-/// `renderValue`: scalars as text, lists of objects as a table whose columns
-/// are the union of their keys, other lists inline, objects nested. Inside
-/// tables and nested objects everything is monospace, as in style.css.
+/// Scalars as text, lists of objects as a table whose columns are the union
+/// of their keys, other lists inline, objects nested. Inside tables and nested
+/// objects everything is monospace.
 fn draw_value(ui: &mut egui::Ui, value: &Value, in_block: bool) {
     let plain = |s: &str| {
         if in_block {
@@ -687,7 +690,8 @@ fn draw_value(ui: &mut egui::Ui, value: &Value, in_block: bool) {
     }
 }
 
-/// `renderTable`: columns are the union of the rows' keys, in first-seen order.
+/// A list of objects as a table; columns are the union of the rows' keys, in
+/// first-seen order.
 fn draw_table(ui: &mut egui::Ui, rows: &[Value]) {
     let columns = table_columns(rows);
     egui::Grid::new(ui.next_auto_id())
@@ -713,7 +717,7 @@ fn draw_table(ui: &mut egui::Ui, rows: &[Value]) {
         });
 }
 
-/// `[...new Set(rows.flatMap((row) => Object.keys(row)))]`.
+/// Every key that appears in any row, each once, in first-seen order.
 pub fn table_columns(rows: &[Value]) -> Vec<&str> {
     let mut columns: Vec<&str> = Vec::new();
     for key in rows
@@ -802,7 +806,7 @@ mod tests {
     }
 
     #[test]
-    fn scalars_render_like_the_web_card() {
+    fn scalars_render_as_the_card_shows_them() {
         assert_eq!(scalar_text(&Value::Null), "—");
         assert_eq!(scalar_text(&Value::Bool(true)), "yes");
         assert_eq!(scalar_text(&Value::Bool(false)), "no");
@@ -811,7 +815,7 @@ mod tests {
         assert_eq!(
             scalar_text(&serde_json::json!(1.0)),
             "1",
-            "String(1.0) in JS"
+            "a whole float prints without a decimal point"
         );
         assert_eq!(scalar_text(&serde_json::json!(-40.0)), "-40");
         assert_eq!(scalar_text(&serde_json::json!("ssh")), "ssh");

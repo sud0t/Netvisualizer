@@ -17,7 +17,7 @@ class Host:
     ip: IPv4Address | IPv6Address
     hostname: str | None = None
     open_ports: list[Port] = field(default_factory=list)
-    is_local: bool | None = None     # inside the scanner's own subnet? (netutils.mark_local); None = unknown
+    is_local: bool | None = None     # inside the scanner's own subnet (netutils.mark_local); None = unknown
     extra: dict = field(default_factory=dict)   # anything new goes here first; the map shows it as is
 
     @property

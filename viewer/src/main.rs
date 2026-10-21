@@ -1,8 +1,10 @@
-//! Native viewer for Pynmapper maps: the same JSON the web page renders, drawn
-//! in a Bevy window. Each module is a port of one `pynmapper/graphics/web/*.js`
-//! file (scene.rs ↔ scene.js, graph.rs ↔ graph.js, controls.rs ↔ controls.js,
-//! picking.rs ↔ picking.js, panel.rs ↔ panel.js, ui.rs ↔ the HTML overlays and
-//! labels); fetch.rs and this file are app.js: polling, arguments, wiring, and
+//! Native viewer for Pynmapper maps: the JSON that `python -m pynmapper`
+//! serves or saves, drawn in a Bevy window. scene.rs sets up the camera,
+//! lights, fog, floor and framing; graph.rs draws the hosts and links;
+//! controls.rs flies the camera; picking.rs handles hover, clicks and the
+//! selection; panel.rs is the sidebar; ui.rs draws the labels, HUD, legend
+//! and help; fetch.rs follows a live map server; map.rs is the JSON contract
+//! and theme.rs the colours. This file holds the arguments, the wiring, and
 //! the keys that need everything.
 //!
 //!     cargo run --features dev                                   # follow http://127.0.0.1:8765
@@ -231,10 +233,10 @@ fn render_settings() -> WgpuSettings {
     settings
 }
 
-/// `onKeyDown` in app.js: the keys that need the picker, panel and help at
-/// once. Movement keys live in controls.rs. Like the page, these go by the
-/// character a key types (`e.key`), so `?` and `/` work on any layout, and
-/// they are read from the key events themselves: a held key does not repeat.
+/// The keys that need the picker, panel and help at once. Movement keys live
+/// in controls.rs. These go by the character a key types (its logical key),
+/// so `?` and `/` work on any layout, and they are read from the key events
+/// themselves: a held key does not repeat.
 #[allow(clippy::too_many_arguments)] // a Bevy system lists what it reads
 fn shortcuts(
     mut key_events: MessageReader<KeyboardInput>,
@@ -306,7 +308,7 @@ fn debug_select(
     });
 }
 
-/// `document.title = ...` in app.js.
+/// The window title: "Pynmapper · N hosts" once a map has been drawn.
 fn update_title(graph: Res<Graph>, mut window: Single<&mut Window, With<PrimaryWindow>>) {
     if graph.is_changed() && graph.drawn {
         window.title = format!("Pynmapper · {} hosts", graph.host_count);
