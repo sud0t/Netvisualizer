@@ -28,7 +28,6 @@ python -m pynmapper 192.168.1.0/24       # sweep this network instead
 python -m pynmapper --ports              # then try common TCP ports on the hosts that answered
 python -m pynmapper --ports 22,80,8000-8010
 python -m pynmapper --save last.json     # keep the result; --json last.json replays it later
-python -m pynmapper --demo               # a fake LAN, no network needed
 python -m pynmapper --list-interfaces    # which networks this machine is on
 python -m pynmapper --help               # everything else
 ```
@@ -37,7 +36,8 @@ The map server starts at `http://127.0.0.1:8765/` before the scan does, and
 the viewer redraws itself as each stage completes. Closing the viewer window
 ends the program. With `--no-open` nothing is opened and the server runs until
 Ctrl-C, for a viewer started by hand (below), or on another machine with
-`--host 0.0.0.0`.
+`--host 0.0.0.0`. To try it without scanning, replay the saved fake LAN in
+`viewer/tests/fixtures/demo.json` with `--json`.
 
 ## Controls
 
@@ -53,8 +53,8 @@ Ctrl-C, for a viewer started by hand (below), or on another machine with
 ## Viewer development
 
 `viewer/` is a Rust crate (Bevy 0.20 + bevy_egui) that follows a map server,
-or draws a saved map. `python -m pynmapper --demo --no-open` in another
-terminal serves a fake LAN to follow:
+or draws a saved map. `python -m pynmapper --json viewer/tests/fixtures/demo.json --no-open`
+in another terminal serves a fake LAN to follow:
 
 ```sh
 cd viewer

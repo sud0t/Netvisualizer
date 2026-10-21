@@ -2,8 +2,8 @@
 
 A layout is any callable ``(NetworkMap) -> dict[host_id, (x, y, z)]``. New
 ones (a tree once traceroute exists, force-directed, ...) can be added here
-and registered in :data:`LAYOUTS` without touching anything else. The frontend
-treats y as up.
+and passed to ``from_hosts(layout=...)`` without touching anything else. The
+viewer treats y as up.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from ipaddress import ip_address
 
 from pynmapper.model import Host
 
-from .model import Layout, NetworkMap, Position, host_id
+from .model import NetworkMap, Position, host_id
 
 SPACING = 3.0      # world units between neighbours on a ring
 MIN_RADIUS = 8.0   # radius of the innermost ring
@@ -73,6 +73,4 @@ def star_ring(net: NetworkMap) -> dict[str, Position]:
             index += 1
     return positions
 
-
-LAYOUTS: dict[str, Layout] = {"star_ring": star_ring}
 

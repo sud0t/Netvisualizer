@@ -11,7 +11,7 @@ name = "pynmapper-viewer"
 path = "src/main.rs"
 
 [dependencies]
-# Versions checked on crates.io 2026-10-20 (see project_spec.md, Milestone 7).
+# Versions checked on crates.io 2026-10-20 (see project_spec.md, Milestone 4).
 # bevy_egui must be the release built for this exact Bevy minor; bump them together.
 bevy = { version = "0.20.0", features = ["wayland", "png"] }
 # The egui release built for Bevy 0.20 (compatibility table in bevy_egui's README).

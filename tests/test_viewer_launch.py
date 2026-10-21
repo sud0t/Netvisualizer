@@ -13,6 +13,9 @@ from unittest import mock
 
 from pynmapper import __main__ as cli
 
+# A saved map to replay with --json, so these tests never scan.
+SAVED_MAP = str(Path(__file__).resolve().parent.parent / "viewer" / "tests" / "fixtures" / "demo.json")
+
 
 def fake_server(url="http://127.0.0.1:8765/"):
     server = mock.Mock(spec=["url", "serve_forever", "stop"])
@@ -24,14 +27,6 @@ class ParserTests(unittest.TestCase):
     def test_the_viewer_opens_unless_no_open(self):
         self.assertFalse(cli.build_parser().parse_args([]).no_open)
         self.assertTrue(cli.build_parser().parse_args(["--no-open"]).no_open)
-
-    def test_there_is_no_viewer_choice_any_more(self):
-        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
-            cli.build_parser().parse_args(["--viewer", "web"])
-
-    def test_no_browser_is_now_no_open(self):
-        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
-            cli.build_parser().parse_args(["--no-browser"])
 
 
 class MissingViewerTests(unittest.TestCase):
@@ -51,13 +46,13 @@ class MissingViewerTests(unittest.TestCase):
 
     def test_main_stops_before_serving_anything(self):
         with mock.patch.object(cli, "serve") as serve, contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(cli.main(["--demo"]), 1)
+            self.assertEqual(cli.main(["--json", SAVED_MAP]), 1)
         serve.assert_not_called()
 
     def test_no_open_and_no_serve_do_not_need_it(self):
         for flag in ("--no-open", "--no-serve"):
             with self.subTest(flag=flag), mock.patch.object(cli, "serve", return_value=(None, None)) as serve:
-                self.assertEqual(cli.main(["--demo", flag]), 0)
+                self.assertEqual(cli.main(["--json", SAVED_MAP, flag]), 0)
                 serve.assert_called_once()
 
 
@@ -122,7 +117,7 @@ class ServeTests(unittest.TestCase):
 
     def test_no_open_serves_without_opening_anything(self):
         with mock.patch.object(cli, "open_viewer") as open_viewer:
-            server, viewer = cli.serve(cli.demo_map(count=2), self.args("--no-open"))
+            server, viewer = cli.serve(cli.NetworkMap(), self.args("--no-open"))
         try:
             self.assertTrue(server.running)
             self.assertIsNone(viewer)
@@ -131,12 +126,12 @@ class ServeTests(unittest.TestCase):
             server.stop()
 
     def test_no_serve_starts_nothing(self):
-        self.assertEqual(cli.serve(cli.demo_map(count=2), self.args("--no-serve")), (None, None))
+        self.assertEqual(cli.serve(cli.NetworkMap(), self.args("--no-serve")), (None, None))
 
     def test_the_viewer_is_opened_on_the_running_server(self):
         with mock.patch.object(cli, "open_viewer", return_value=None) as open_viewer, \
                 contextlib.redirect_stdout(io.StringIO()):
-            server, _ = cli.serve(cli.demo_map(count=2), self.args())
+            server, _ = cli.serve(cli.NetworkMap(), self.args())
         try:
             open_viewer.assert_called_once_with(server, quiet=True)
         finally:

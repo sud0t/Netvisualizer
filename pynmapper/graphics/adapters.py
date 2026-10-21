@@ -1,7 +1,7 @@
 """Adapters turn whatever the backend returns into a :class:`NetworkMap`.
 
 This is the one module that is expected to change when the backend's output
-shape changes. Everything downstream (layouts, server, frontend) only ever
+shape changes. Everything downstream (layouts, server, viewer) only ever
 sees a ``NetworkMap``.
 """
 

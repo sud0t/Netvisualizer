@@ -4,7 +4,7 @@ A :class:`NetworkMap` wraps the backend's ``Host`` objects, which are never
 modified here, with the extra information a renderer needs: a role per host,
 a 3D position per host, links between hosts, and scan metadata.
 
-``NetworkMap.to_dict()`` produces the document the frontend reads::
+``NetworkMap.to_dict()`` produces the document the viewer reads::
 
     {
       "version": 1, "revision": 0, "generated_at": "2026-10-19T12:00:00+00:00",
@@ -20,8 +20,8 @@ a 3D position per host, links between hosts, and scan metadata.
 
 Every field of ``Host`` is serialised generically by walking its dataclass
 fields, so a field added to the backend model appears in the JSON (and in the
-frontend's info panel) with no change on this side. ``id``, ``label``, ``role``
-and ``position`` are added on top and are the only keys the frontend relies on.
+viewer's details card) with no change on this side. ``id``, ``label``, ``role``
+and ``position`` are added on top and are the only keys the viewer relies on.
 """
 
 from __future__ import annotations
@@ -134,7 +134,7 @@ class NetworkMap:
         return self
 
     def touch(self) -> NetworkMap:
-        """Bump the revision so a polling frontend knows to redraw."""
+        """Bump the revision so a polling viewer knows to redraw."""
         self.revision += 1
         self.generated_at = _now()
         return self

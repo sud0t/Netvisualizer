@@ -5,7 +5,6 @@
     python -m pynmapper --ports              # then try common TCP ports on the hosts that answered
     python -m pynmapper --ports 22,80,8000-8010
     python -m pynmapper --save last.json     # keep the result; --json last.json replays it later
-    python -m pynmapper --demo               # a fake LAN, no network needed
     python -m pynmapper --list-interfaces    # which networks this machine is on
 
 - __main__.py decides which steps run and in what order (this file).
@@ -31,7 +30,7 @@ from ipaddress import IPv4Network, ip_network
 from pathlib import Path
 
 from pynmapper import graphics, netutils
-from pynmapper.graphics import MapServer, NetworkMap, demo_map
+from pynmapper.graphics import MapServer, NetworkMap
 from pynmapper.graphics.server import DEFAULT_HOST, DEFAULT_PORT
 from pynmapper.model import Host
 from pynmapper.netutils import LocalNetwork
@@ -104,7 +103,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     instead = parser.add_argument_group("instead of scanning")
     instead.add_argument("--json", type=Path, metavar="FILE", help="show a map saved earlier with --save")
-    instead.add_argument("--demo", action="store_true", help="show a generated fake LAN")
 
     output = parser.add_argument_group("output")
     output.add_argument("--save", type=Path, metavar="FILE", help="write the finished map as JSON")
@@ -239,10 +237,10 @@ def main(argv: list[str] | None = None) -> int:
     if not (args.no_serve or args.no_open) and not viewer_is_built():
         return 1
 
-    # ----- replay / demo: nothing to scan ---------------------------------
-    if args.demo or args.json:
+    # ----- replay: nothing to scan ---------------------------------------
+    if args.json:
         try:
-            net_map = demo_map() if args.demo else NetworkMap.load(args.json)
+            net_map = NetworkMap.load(args.json)
         except (OSError, ValueError) as exc:
             print(f"error: could not load map: {exc}", file=sys.stderr)
             return 1

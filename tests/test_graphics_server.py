@@ -4,8 +4,10 @@ import json
 import unittest
 import urllib.error
 import urllib.request
+from ipaddress import ip_address
 
-from pynmapper.graphics import MapServer, NetworkMap, demo_map
+from pynmapper.graphics import MapServer, NetworkMap, from_hosts
+from pynmapper.model import Host
 
 
 def get(url):
@@ -13,9 +15,15 @@ def get(url):
         return res.status, res.headers, res.read()
 
 
+def lan(count):
+    """A scanner, a gateway and ``count`` other hosts."""
+    hosts = [Host(ip=ip_address(f"192.168.1.{n}")) for n in range(1, count + 3)]
+    return from_hosts(hosts, scanner_ip="192.168.1.1", gateway_ip="192.168.1.2", network="192.168.1.0/24")
+
+
 class MapServerTests(unittest.TestCase):
     def setUp(self):
-        self.server = MapServer(demo_map(count=5), port=0).start()
+        self.server = MapServer(lan(5), port=0).start()
         self.base = self.server.url
 
     def tearDown(self):
@@ -37,7 +45,7 @@ class MapServerTests(unittest.TestCase):
 
     def test_update_bumps_revision_and_changes_payload(self):
         before = json.loads(get(self.base + "api/map")[2])
-        self.server.update(demo_map(count=2, seed=9))
+        self.server.update(lan(2))
         after = json.loads(get(self.base + "api/map")[2])
         self.assertEqual(before["revision"], 0)
         self.assertEqual(after["revision"], 1)
@@ -58,7 +66,7 @@ class MapServerTests(unittest.TestCase):
         ctx.exception.close()
 
     def test_only_the_api_is_served(self):
-        for path in ("", "index.html", "app.js"):
+        for path in ("", "map.json", "api/"):
             with self.subTest(path=path), self.assertRaises(urllib.error.HTTPError) as ctx:
                 get(self.base + path)
             self.assertEqual(ctx.exception.code, 404)

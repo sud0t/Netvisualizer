@@ -7,9 +7,17 @@ from dataclasses import dataclass
 from ipaddress import IPv4Address, ip_address
 from pathlib import Path
 
-from pynmapper.graphics import CONTRACT_VERSION, Link, NetworkMap, demo_map, host_id
+from pynmapper.graphics import CONTRACT_VERSION, Link, NetworkMap, from_hosts, host_id
 from pynmapper.graphics.model import host_from_dict, host_to_dict
 from pynmapper.model import Host, Port
+
+# A saved 27-host map, also the Rust viewer's test fixture: every role, ports, extras.
+FIXTURE = Path(__file__).resolve().parent.parent / "viewer" / "tests" / "fixtures" / "demo.json"
+
+
+def small_map():
+    hosts = [Host(ip=ip_address(f"10.0.0.{n}"), open_ports=[Port(22, "tcp")]) for n in range(1, 6)]
+    return from_hosts(hosts, scanner_ip="10.0.0.1", gateway_ip="10.0.0.2", network="10.0.0.0/24")
 
 
 class HostSerialisation(unittest.TestCase):
@@ -62,7 +70,7 @@ class HostSerialisation(unittest.TestCase):
 
 class NetworkMapSerialisation(unittest.TestCase):
     def test_round_trip_is_lossless(self):
-        net = demo_map(count=12)
+        net = NetworkMap.load(FIXTURE)
         net.touch()
         copy = NetworkMap.from_json(net.to_json())
 
@@ -75,14 +83,14 @@ class NetworkMapSerialisation(unittest.TestCase):
         self.assertEqual(copy.revision, 1)
 
     def test_document_shape(self):
-        doc = demo_map(count=3).to_dict()
+        doc = small_map().to_dict()
         self.assertEqual(doc["version"], CONTRACT_VERSION)
         self.assertEqual(set(doc), {"version", "revision", "generated_at", "scan", "hosts", "links"})
-        self.assertEqual(doc["scan"]["type"], "demo")
+        self.assertEqual(doc["scan"]["type"], "ping_sweep")
         self.assertTrue(all({"id", "label", "role", "position"} <= set(h) for h in doc["hosts"]))
 
     def test_save_and_load(self):
-        net = demo_map(count=5)
+        net = small_map()
         with tempfile.TemporaryDirectory() as tmp:
             path = net.save(Path(tmp) / "map.json")
             loaded = NetworkMap.load(path)

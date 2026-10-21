@@ -14,20 +14,17 @@ Typical use from the entry point::
 """
 
 from .adapters import apply_hostnames, from_hosts, from_ping_sweep
-from .demo import demo_map
-from .layout import LAYOUTS, star_ring
+from .layout import star_ring
 from .model import CONTRACT_VERSION, Link, NetworkMap, ScanInfo, host_id
 from .server import MapServer
 
 __all__ = [
     "CONTRACT_VERSION",
-    "LAYOUTS",
     "Link",
     "MapServer",
     "NetworkMap",
     "ScanInfo",
     "apply_hostnames",
-    "demo_map",
     "from_hosts",
     "from_ping_sweep",
     "host_id",
