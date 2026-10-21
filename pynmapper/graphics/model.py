@@ -12,7 +12,7 @@ a 3D position per host, links between hosts, and scan metadata.
       "hosts": [
         {"id": "192.168.1.10", "label": "nas.lan", "role": "host",
          "ip": "192.168.1.10", "hostname": "nas.lan",
-         "open_ports": [{"number": 22, "proto": "tcp"}], "is_local": null, "extra": {},
+         "open_ports": [{"number": 22, "proto": "tcp", "service": "ssh"}], "is_local": null, "extra": {},
          "position": [8.0, 0.0, 0.0]}
       ],
       "links": [{"source": "192.168.1.50", "target": "192.168.1.10", "kind": "subnet"}]
@@ -87,6 +87,7 @@ class ScanInfo:
     type: str = "ping_sweep"
     network: str | None = None
     scanner_ip: str | None = None
+    stage: str | None = None     # free text shown in the HUD while a scan is in progress ("resolving names…")
 
 
 @dataclass

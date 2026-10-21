@@ -23,7 +23,7 @@ class HostSerialisation(unittest.TestCase):
         self.assertEqual(data["position"], [1.0, 2.0, 3.0])
         self.assertEqual(data["ip"], "10.0.0.7")          # address serialised as a string
         self.assertEqual(data["hostname"], "nas.lan")
-        self.assertEqual(data["open_ports"], [{"number": 22, "proto": "tcp"}])
+        self.assertEqual(data["open_ports"], [{"number": 22, "proto": "tcp", "service": None}])
         json.dumps(data)  # must be JSON-safe
 
     def test_label_falls_back_to_ip(self):

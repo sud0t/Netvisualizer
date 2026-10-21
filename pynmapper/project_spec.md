@@ -3,6 +3,8 @@
 ## Your role
 You are going to be handling the graphics side of this project, do not touch the actual network mapping part as that is what I am using to learn, even if there are vast optimizations to be made for the actual network mapping still do not touch it. Your goal is to write the graphics so that they are compatible with what I write for the networking part.
 
+> Update 2026-10-20: Kyler granted permission to edit the networking code as needed to reach the project's goals. The networking side is still explained in plain words when it changes, since the project is for learning.
+
 ### General instructions (open to recommendation)
 - Create a 3D map of a given network based off the function that was run
 - Scapy is not wired in yet so the first graphics target is the output of `async_ping_sweep` (plus `get_host_names`)
@@ -24,15 +26,13 @@ You are going to be handling the graphics side of this project, do not touch the
 - Reasons: best visuals and free HTML info panels, keeps all graphics work separate from the networking code, VPython is browser based anyway but with dated visuals and global scene state (and it currently fails to import in `.venv` on Python 3.14 because setuptools is missing).
 - Alternatives considered and rejected for now: Panda3D (pure Python engine, good but heavier), Ursina, VPython as originally spec'd.
 
-### Launching
-- `python -m pynmapper.graphics --demo` renders ~25 fake hosts with no network needed (day-to-day graphics development).
-- `pynmapper.py` gets a small call after the sweep that builds the map and opens the browser. `netutils.py` is never touched by the graphics side.
-- Also planned: `--json FILE` to load a saved map and `--save FILE` to dump one, so real scans can be replayed without a network.
+### Launching (implemented 2026-10-20)
+- `python -m pynmapper` detects the interface with the default route, sweeps its subnet, starts the map server, opens the browser, then publishes the map again after each stage (sweep, names, ports) so the page redraws live. Options: a CIDR argument, `-i IFACE`, `--ports [LIST]`, `--no-names`, `--timeout`, `--concurrency`, `--save FILE`, `--json FILE`, `--demo`, `--no-browser`, `--no-serve`, `--port`, `--host`, `--list-interfaces`.
+- `python -m pynmapper.graphics --demo` renders ~25 fake hosts with no network needed (day-to-day graphics development); `--json`/`--save` replay and dump maps there too.
 
 ### Hostnames
-- `netutils.get_host_names(list[str])` returns the raw `socket.gethostbyaddr` tuples `(hostname, aliases, [ips])` and skips hosts that do not resolve, so its output is shorter than its input and not positionally aligned.
-- The graphics adapter therefore keys hostnames by the IP inside each tuple's third element rather than by list position. This works as is; no change needed on the networking side.
-- (Noted, left alone on purpose: `netutils.main()` uses `i` after the `except` branch, so a failed sweep raises `NameError`; `get_host_names` is serial and blocking so it is fine for a /24 but slow for larger ranges.)
+- `netutils.resolve_hostnames(hosts)` (2026-10-20) writes `host.hostname` straight into the Host objects, running the blocking `gethostbyaddr` calls in threads, 32 at a time, because every miss waits for the resolver's full timeout. The scanner's own name falls back to `socket.gethostname()`.
+- The older `netutils.get_host_names(list[str])` (raw `gethostbyaddr` tuples, shorter than its input) is kept; `graphics.apply_hostnames` still understands it by matching on the IP inside each tuple.
 
 
 ## Shared data model: the one contract between backend and graphics
@@ -65,9 +65,9 @@ class Host:
 ```
 
 Notes:
-- `async_ping_sweep` now returns `list[Host]`; the graphics adapter `from_hosts` takes that list plus the scanner IP.
-- Fields added to `Host` or `Port` later (service, state, mac, ...) show up in the JSON and the info panel automatically.
-- `get_host_names` can stay as is (graphics matches its tuples by IP via `apply_hostnames`), or become a netutils function that sets `host.hostname` directly.
+- `async_ping_sweep` returns `list[Host]`; the graphics adapter `from_hosts` takes that list plus the scanner IP (and gateway IP).
+- Fields added to `Host` or `Port` later show up in the JSON and the info panel automatically. `Port.service` (2026-10-20, e.g. "ssh") was the first such addition and needed no frontend change.
+- A host with `extra["status"] == "down"` is drawn grey; `__main__` uses this for a gateway that ignores ping.
 
 ### Why
 - A sweep result today is a bare list of IPs, with hostnames in a separate shorter list that has to be re-aligned by hand. `Host` keeps ip, hostname and ports together.
@@ -109,7 +109,7 @@ tests/ (repo root)          # stdlib unittest: model round trip, adapters (hostn
   "scan": {"type": "ping_sweep", "network": "192.168.1.0/24", "scanner_ip": "192.168.1.50"},
   "hosts": [ {"id": "192.168.1.10", "label": "nas.lan", "role": "host",
               "ip": "192.168.1.10", "hostname": "nas.lan",
-              "open_ports": [{"number": 22, "proto": "tcp"}], "is_local": null, "extra": {},
+              "open_ports": [{"number": 22, "proto": "tcp", "service": "ssh"}], "is_local": null, "extra": {},
               "position": [8.0, 0.0, 0.0]} ],
   "links": [ {"source": "192.168.1.50", "target": "192.168.1.10", "kind": "subnet"} ] }
 ```
@@ -123,23 +123,29 @@ tests/ (repo root)          # stdlib unittest: model round trip, adapters (hostn
 - Panel: label, ip, role, status, ports table, extra key/values; host list sidebar with text filter, click = select + fly-to.
 - Live updates: the page polls `/api/map` and rebuilds when `revision` changes, so the browser can open before the sweep finishes.
 
-### Wiring into `__main__.py` (only entry file touched)
-```python
-hosts = asyncio.run(netutils.async_ping_sweep(myIP, prefix))
-# ... turn into list[Host] (or pass hostnames from get_host_names) ...
-net_map = graphics.from_hosts(hosts, scanner_ip=myIP, network=f"{myIP}/{prefix}")
-graphics.serve(net_map)        # starts server, opens browser, blocks until Ctrl-C
-```
+### Wiring in `__main__.py` (done 2026-10-20)
+`main()` resolves the local network (`netutils.get_local_network`), starts a `MapServer` with a scanner-only map whose `scan.stage` says "sweeping…", then runs `run_scan()`: ping sweep → `mark_local` → `ensure_gateway` → `resolve_hostnames` → optional `async_port_scan`. After each stage it calls `server.update(build_map(hosts, ...))`; the server carries the revision forward so the polling page redraws every time. The page re-frames the camera on each update until the user moves it.
+
+### Networking functions (`netutils.py`, 2026-10-20)
+- `get_local_network(interface=None) -> LocalNetwork(interface, ip, network, gateway)` and `list_local_networks()`: read scapy's routing table (`scapy.route`, ~0.15 s import, warnings silenced); connected routes with no gateway are the subnets, the default route gives the gateway. Without scapy: `get_local_ip()` and an assumed /24.
+- `async_ping(ip, timeout)`: system `ping`, exit code 0 = alive (flags per OS in `ping_command`). `async_ping_sweep(network, *, timeout, concurrency, progress)`: batches of `concurrency` pings; a /24 is one batch of about one second.
+- `async_port_scan(hosts, ports=COMMON_TCP_PORTS, *, timeout, concurrency, progress)`: TCP connect scan via `asyncio.open_connection`, TCP only, no root; `service_name()` adds the well-known name.
+- Still TODO: layer-2 (ARP) enumeration with scapy for hosts that ignore ping (needs root); traceroute for real topology.
 
 ### Milestones
 1. **done** `graphics/model.py`, `adapters.py`, `layout.py`, `demo.py` + unit tests (`python -m unittest discover tests` from the repo root).
-2. **done** `server.py` + `__main__.py`: `python -m pynmapper.graphics --demo` serves JSON + static files and opens the browser (placeholder page until milestone 3).
-3. Vendor three.js, build `scene.js` + `graph.js`: nodes, links, labels render from `/api/map`.
-4. `controls.js` + `picking.js` + `panel.js`: WASD fly, mouse look, hover/click, panel, host list, fly-to.
-5. Polish: colours/legend/help overlay, label fade, revision polling, `--save/--json` round trip.
-6. Wire `__main__.py`; real sweep end to end.
+2. **done** `server.py` + `__main__.py`: `python -m pynmapper.graphics --demo` serves JSON + static files and opens the browser.
+3. **done (2026-10-20)** three.js r186 vendored (`web/vendor/VERSION` says how to upgrade); `scene.js` + `graph.js` render nodes, links and labels from `/api/map`.
+4. **done (2026-10-20)** `controls.js` (WASD/QE, Shift, right-mouse look, wheel = speed, fly-to and reset tweens), `picking.js` (hover, click, double-click, selection ring), `panel.js` (host list with filter, generic details card).
+5. **done (2026-10-20)** legend, help overlay (`?`), labels fade with distance, "down" hosts drawn grey (read from `status` or `extra.status` once the backend reports it), revision polling, `--save/--json` round trip, shader-drawn grid floor, framing that leaves room for the sidebar.
+6. **done (2026-10-20)** `__main__.py` with argparse; real sweep end to end verified on the dev LAN (10 hosts, gateway with 6 open ports, 3.3 s with `--ports`).
+
+### Frontend verification (2026-10-20)
+- `tests/test_graphics_web.py` checks, without a browser, that every module import, stylesheet reference and DOM id the JavaScript uses resolves, and that the server serves them with the right MIME types.
+- The behaviour (hover, click, fly-to, keys, right-drag look, wheel, filter, help, selection surviving a map reload, label fade, "down" colouring, sidebar-aware framing) was exercised in headless Chrome over the DevTools protocol; 40 checks pass with no console errors.
+- Known browser quirk: Chrome drops GL line segments that cross the camera's near plane, so a `GridHelper` loses all of its depth-running lines whenever the camera is over the grid. The floor is therefore a plane whose grid is drawn in the fragment shader.
 
 ### Environment facts
 - Repo root `Pynmapper/` has an empty `pyproject.toml` and `.venv` (Python 3.14, numpy, scapy 2.7 installed). `pynmapper/` is a package (`__init__.py`, `__main__.py`); run with `python -m pynmapper` from the repo root; internal imports are absolute (`from pynmapper.model import Host`).
-- Graphics adds no Python dependencies (http.server, json, webbrowser, dataclasses, threading only).
+- Graphics adds no Python dependencies (http.server, json, webbrowser, dataclasses, threading only). Networking uses the system `ping`, `socket`, `asyncio`, and scapy only for the routing table (optional).
 - Dev machine: Wayland, NVIDIA GPU with OpenGL 4.6, Chrome available for testing.

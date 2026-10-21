@@ -76,9 +76,15 @@ class MapServer:
         return self._map.revision
 
     def update(self, net_map: NetworkMap, bump: bool = True) -> MapServer:
-        """Replace the served map. Bumps its revision unless ``bump`` is false."""
+        """Replace the served map. Bumps its revision unless ``bump`` is false.
+
+        The revision continues from the map being replaced, so a caller that
+        builds a fresh map for every stage of a scan (revision 0 each time)
+        still produces 1, 2, 3, ... and the polling page notices every update.
+        """
         with self._lock:
             if bump:
+                net_map.revision = max(net_map.revision, self._map.revision)
                 net_map.touch()
             self._map = net_map
             self._payload = None

@@ -4,34 +4,64 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pynmapper</title>
-  <style>
-    :root { color-scheme: dark; }
-    body { margin: 0; padding: 16px; font: 14px/1.4 system-ui, sans-serif; background: #0e1117; color: #d7dde5; }
-    h1 { font-size: 18px; margin: 0 0 8px; }
-    .meta { color: #8b96a5; margin-bottom: 12px; }
-    pre { background: #161b24; padding: 12px; border-radius: 6px; overflow: auto; max-height: 70vh; }
-  </style>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Ccircle cx=%278%27 cy=%278%27 r=%276%27 fill=%27%2322d3ee%27/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./style.css">
+  <!-- Buildless ES modules: the vendored three.js is resolved through this import
+       map, so our modules and CSS2DRenderer.js can both say `from "three"`. -->
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three.module.js" } }
+  </script>
 </head>
 <body>
-  <h1>Pynmapper — placeholder page</h1>
-  <div class="meta" id="meta">loading /api/map…</div>
-  <pre id="out"></pre>
-  <script>
-    // Milestone 2 placeholder: proves the server + JSON contract work end to end.
-    // Milestone 3 replaces this file with the three.js scene.
-    async function refresh() {
-      try {
-        const res = await fetch("/api/map");
-        const map = await res.json();
-        document.getElementById("meta").textContent =
-          `revision ${map.revision} · ${map.hosts.length} hosts · ${map.links.length} links · scan ${map.scan.type} ${map.scan.network ?? ""}`;
-        document.getElementById("out").textContent = JSON.stringify(map, null, 2);
-      } catch (err) {
-        document.getElementById("meta").textContent = `fetch failed: ${err}`;
-      }
-    }
-    refresh();
-    setInterval(refresh, 2000);
-  </script>
+  <!-- scene.js appends the WebGL canvas and the HTML label layer here -->
+  <div id="viewport"></div>
+
+  <header id="hud">
+    <div id="brand">Pynmapper</div>
+    <div id="status" data-state="connecting">connecting…</div>
+    <div id="speed" title="fly speed: mouse wheel changes it">—</div>
+    <button id="help-button" type="button" title="controls (?)">?</button>
+  </header>
+
+  <aside id="sidebar">
+    <div id="sidebar-head">
+      <input id="filter" type="search" placeholder="filter hosts  ( / )" autocomplete="off" spellcheck="false">
+      <span id="host-count">0</span>
+      <button id="sidebar-toggle" type="button" title="show / hide the host list">⟩</button>
+    </div>
+    <section id="details" hidden></section>
+    <ul id="hosts"></ul>
+  </aside>
+
+  <ul id="legend" aria-label="legend">
+    <li><span class="swatch role-scanner"></span>scanner</li>
+    <li><span class="swatch role-gateway"></span>gateway</li>
+    <li><span class="swatch role-host"></span>host</li>
+  </ul>
+
+  <div id="help" hidden>
+    <div class="card" role="dialog" aria-label="controls">
+      <h2>Controls</h2>
+      <table>
+        <tr><td><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd></td><td>fly forward / left / back / right</td></tr>
+        <tr><td><kbd>Q</kbd> <kbd>E</kbd></td><td>down / up</td></tr>
+        <tr><td><kbd>Shift</kbd></td><td>fly faster</td></tr>
+        <tr><td>right mouse (hold)</td><td>look around</td></tr>
+        <tr><td>mouse wheel</td><td>change fly speed</td></tr>
+        <tr><td>left click</td><td>select a host, open its details</td></tr>
+        <tr><td>double click</td><td>fly to a host</td></tr>
+        <tr><td><kbd>F</kbd></td><td>fly to the selected host</td></tr>
+        <tr><td><kbd>R</kbd></td><td>reset the view</td></tr>
+        <tr><td><kbd>/</kbd></td><td>filter the host list</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>deselect / close</td></tr>
+        <tr><td><kbd>?</kbd></td><td>this help</td></tr>
+      </table>
+      <p>Press <kbd>?</kbd> or <kbd>Esc</kbd> to close.</p>
+    </div>
+  </div>
+
+  <div id="fatal" hidden></div>
+
+  <script type="module" src="./app.js"></script>
 </body>
 </html>

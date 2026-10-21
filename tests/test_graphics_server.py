@@ -104,5 +104,19 @@ class MapServerSetup(unittest.TestCase):
         self.assertFalse(server.running)
 
 
+class RevisionTests(unittest.TestCase):
+    def test_fresh_maps_still_get_increasing_revisions(self):
+        # __main__ builds a brand new NetworkMap (revision 0) after every scan
+        # stage; the browser only reloads when the revision changes.
+        server = MapServer(NetworkMap())
+        seen = []
+        for _ in range(3):
+            server.update(NetworkMap())
+            seen.append(server.revision)
+        self.assertEqual(seen, [1, 2, 3])
+        server.update(NetworkMap(revision=10))
+        self.assertEqual(server.revision, 11)
+
+
 if __name__ == "__main__":
     unittest.main()
