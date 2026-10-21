@@ -4,12 +4,13 @@
 
 use bevy::color::Alpha;
 use bevy::prelude::*;
-use bevy::render::view::Tonemapping;
+use bevy::render::view::{DebandDither, Tonemapping};
 use bevy::window::{PrimaryWindow, WindowResized};
 
 use crate::ViewerSet;
 use crate::controls::FlyControls;
 use crate::graph::{Bounds, Graph};
+use crate::panel::Panel;
 use crate::theme;
 
 /// Elevated, looking in from +z (`DEFAULT_VIEW_DIR`); normalised where used.
@@ -103,8 +104,10 @@ fn setup(mut commands: Commands) {
             ..default()
         }),
         // The web page renders without tone mapping; match it so the role
-        // colours come out as the swatches in style.css.
+        // colours come out as the swatches in style.css. Debanding only works
+        // after tone mapping, so it is off too (Bevy warns about the pair otherwise).
         Tonemapping::None,
+        DebandDither::Disabled,
         Transform::from_xyz(0.0, 20.0, 38.0).looking_at(Vec3::ZERO, Vec3::Y),
         DistanceFog {
             color: theme::SCENE_BG,
@@ -141,16 +144,18 @@ pub struct ViewState {
 }
 
 /// Ask for the map to be re-framed (`resetView` in app.js). R sends it with
-/// `animate: true`; the sidebar's framing inset arrives with step 7.3.
+/// `animate: true`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ResetView {
     pub animate: bool,
 }
 
-/// Frame the map when it changes, when the window is resized, or on request.
+/// Frame the map when it changes, when the window is resized, or on request,
+/// fitting it into the part of the window the sidebar leaves free.
 #[allow(clippy::too_many_arguments)] // a Bevy system lists what it reads
 fn frame_when_needed(
     graph: Res<Graph>,
+    panel: Res<Panel>,
     mut resized: MessageReader<WindowResized>,
     mut requests: MessageReader<ResetView>,
     mut view: ResMut<ViewState>,
@@ -164,7 +169,7 @@ fn frame_when_needed(
 
     // What kind of framing this frame needs, if any.
     let mut animate: Option<bool> = None;
-    if graph.is_changed() {
+    if graph.is_changed() && graph.drawn {
         if !view.framed {
             animate = Some(false);
             view.framed = true;
@@ -192,7 +197,7 @@ fn frame_when_needed(
         &graph.bounds,
         viewport,
         fov,
-        Inset::default(),
+        panel.frame_inset(window.width()),
         DEFAULT_VIEW_DIR,
     );
     apply_framing(

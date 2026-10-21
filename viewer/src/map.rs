@@ -7,7 +7,6 @@
 //! `pynmapper/model.py` later) is kept verbatim in [`Host::fields`], in the
 //! order Python wrote it, so the generic details card can render it the way
 //! panel.js does, with no change here when the backend grows.
-#![allow(dead_code)] // a complete mirror of the contract: labels (7.2), the sidebar (7.3) and live mode (7.4) read the rest
 
 use std::error::Error;
 use std::fs;
@@ -25,6 +24,7 @@ pub struct MapDoc {
     pub version: u64,
     #[serde(default)]
     pub revision: u64,
+    #[allow(dead_code)] // part of the contract mirror; nothing draws it yet
     #[serde(default)]
     pub generated_at: Option<String>,
     #[serde(default)]
@@ -46,11 +46,13 @@ pub struct Scan {
     pub kind: Option<String>,
     #[serde(default)]
     pub network: Option<String>,
+    #[allow(dead_code)] // part of the contract mirror; nothing draws it yet
     #[serde(default)]
     pub scanner_ip: Option<String>,
     /// Free text from `__main__.py` while a scan is in progress ("sweeping…").
     #[serde(default)]
     pub stage: Option<String>,
+    #[allow(dead_code)] // part of the contract mirror; nothing draws it yet
     #[serde(flatten)]
     pub rest: Map<String, Value>,
 }
@@ -76,8 +78,10 @@ pub struct Host {
 pub struct Link {
     pub source: String,
     pub target: String,
+    #[allow(dead_code)] // part of the contract mirror; nothing draws it yet
     #[serde(default)]
     pub kind: Option<String>,
+    #[allow(dead_code)] // part of the contract mirror; nothing draws it yet
     #[serde(flatten)]
     pub rest: Map<String, Value>,
 }

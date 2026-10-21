@@ -91,10 +91,11 @@ impl NodeState {
     const ALL: [NodeState; 3] = [NodeState::None, NodeState::Hover, NodeState::Selected];
 }
 
-/// The latest map. Step 7.1 loads it from a file once; the fetch thread of
-/// step 7.4 replaces it whenever the server's revision changes.
-#[derive(Resource, Debug)]
-pub struct MapDocument(pub MapDoc);
+/// The latest map: loaded once from `--json`, or replaced by fetch.rs whenever
+/// the server's revision changes. `None` until the first map arrives in live
+/// mode (`revision === null` in app.js).
+#[derive(Resource, Debug, Default)]
+pub struct MapDocument(pub Option<MapDoc>);
 
 /// Shared resources: one unit sphere scaled per node and one material per
 /// (state, colour) pair, so highlighting a node is a handle swap, not a clone.
@@ -116,8 +117,6 @@ pub struct Node {
     pub id: String,
     /// `host.label || host.id`, what the label above the sphere says.
     pub label: String,
-    #[allow(dead_code)] // the sidebar's role badge reads it (7.3)
-    pub role: Role,
     pub key: ColorKey,
     pub radius: f32,
     pub state: NodeState,
@@ -133,6 +132,9 @@ pub struct Graph {
     pub bounds: Bounds,
     pub host_count: usize,
     pub link_count: usize,
+    /// False until a map document has been drawn, so the empty graph that
+    /// exists at start-up is never mistaken for the first map.
+    pub drawn: bool,
 }
 
 /// An axis-aligned box (`THREE.Box3`), empty until a point is added.
@@ -231,10 +233,12 @@ fn rebuild(
     if !doc.is_changed() {
         return;
     }
+    let Some(doc) = &doc.0 else {
+        return;
+    };
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    let doc = &doc.0;
     let positions = resolve_positions(&doc.hosts);
 
     let mut next = Graph::default();
@@ -248,7 +252,6 @@ fn rebuild(
                 Node {
                     id: host.id.clone(),
                     label: host.display_label().to_string(),
-                    role,
                     key,
                     radius,
                     state: NodeState::None,
@@ -283,6 +286,7 @@ fn rebuild(
     next.bounds.max.y += LABEL_GAP + 1.0;
     next.host_count = doc.hosts.len();
     next.link_count = doc.links.len();
+    next.drawn = true;
     *graph = next;
 }
 

@@ -6,14 +6,16 @@
     python -m pynmapper --ports 22,80,8000-8010
     python -m pynmapper --save last.json     # keep the result; --json last.json replays it later
     python -m pynmapper --demo               # a fake LAN, no network needed
+    python -m pynmapper --viewer web         # draw the map in a browser tab instead of its own window
     python -m pynmapper --list-interfaces    # which networks this machine is on
 
 - __main__.py decides which steps run and in what order (this file).
 - netutils.py finds hosts and fills in their values.
 - graphics/ draws whatever it is given.
 
-The map server starts before the scan, so the browser opens at once and the
-page redraws itself as each stage (sweep, names, ports) finishes.
+The map server starts before the scan, so the map opens at once (in the
+native viewer, or the browser) and redraws itself as each stage (sweep,
+names, ports) finishes.
 """
 
 from __future__ import annotations
@@ -21,7 +23,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import socket
+import subprocess
 import sys
 from collections.abc import Callable
 from ipaddress import IPv4Network, ip_network
@@ -36,6 +40,10 @@ from pynmapper.netutils import LocalNetwork
 log = logging.getLogger("pynmapper")
 
 MAX_SWEEP = 65536  # addresses; a /16 takes a few minutes, anything bigger is a mistake
+
+# The native viewer, built with `cargo build --release` in viewer/.
+VIEWER_DIR = Path(__file__).resolve().parent.parent / "viewer"
+VIEWER_BINARY = VIEWER_DIR / "target" / "release" / ("pynmapper-viewer.exe" if os.name == "nt" else "pynmapper-viewer")
 
 Publish = Callable[[list[Host], str], None]  # (hosts so far, stage text) -> redraw the map
 
@@ -80,7 +88,7 @@ def parse_network(text: str) -> IPv4Network:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m pynmapper",
-        description="Find the hosts on a network and show them as a 3D map in the browser.",
+        description="Find the hosts on a network and show them as a 3D map, in its own window or in the browser.",
         epilog="examples:  python -m pynmapper --ports        python -m pynmapper 10.0.0.0/24 --save scan.json",
     )
     parser.add_argument("network", nargs="?", type=parse_network,
@@ -100,9 +108,13 @@ def build_parser() -> argparse.ArgumentParser:
     instead.add_argument("--demo", action="store_true", help="show a generated fake LAN")
 
     output = parser.add_argument_group("output")
+    output.add_argument("--viewer", choices=("native", "web"), default="native",
+                        help="native: the map in its own window (the Rust viewer in viewer/; the browser is used "
+                             "instead while it is not built); web: the map in a browser tab (default native)")
     output.add_argument("--save", type=Path, metavar="FILE", help="write the finished map as JSON")
     output.add_argument("--no-serve", action="store_true", help="exit after the scan instead of serving the map (pairs with --save)")
-    output.add_argument("--no-browser", action="store_true", help="serve the map but do not open a browser tab")
+    output.add_argument("--no-open", action="store_true",
+                        help="serve the map but open neither viewer (follow it later with the viewer or a browser)")
     output.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"map server port (default {DEFAULT_PORT}, 0 = any free)")
     output.add_argument("--host", default=DEFAULT_HOST,
                         help=f"map server bind address (default {DEFAULT_HOST}; 0.0.0.0 lets other machines view it)")
@@ -151,15 +163,67 @@ async def run_scan(args: argparse.Namespace, local: LocalNetwork, network: IPv4N
     return hosts
 
 
-def serve(net_map: NetworkMap, args: argparse.Namespace) -> MapServer | None:
-    """Start the map server (unless --no-serve) and open the browser (unless --no-browser)."""
+def serve(net_map: NetworkMap, args: argparse.Namespace) -> tuple[MapServer | None, subprocess.Popen | None]:
+    """Start the map server (unless --no-serve) and open the map (unless --no-open).
+
+    Returns the server and, when the native viewer was started, its process.
+    """
     if args.no_serve:
-        return None
+        return None, None
     server = MapServer(net_map, host=args.host, port=args.port).start()
     print(f"Pynmapper map: {server.url}  (Ctrl-C to stop)", flush=True)
-    if not args.no_browser:
+    viewer = None if args.no_open else open_viewer(server, args.viewer, quiet=not args.verbose)
+    return server, viewer
+
+
+def open_viewer(server: MapServer, viewer: str, quiet: bool = True) -> subprocess.Popen | None:
+    """Show the served map in the native viewer (``"native"``) or a browser tab (``"web"``).
+
+    The native viewer follows ``server.url`` the way the page does, so it redraws
+    as the scan goes on. When it has not been built, say how to build it and use
+    the browser instead. Returns the viewer's process, or None for the browser.
+    """
+    if viewer == "native":
+        if VIEWER_BINARY.is_file():
+            env = dict(os.environ)
+            if quiet:
+                env.setdefault("RUST_LOG", "warn")  # Bevy logs its GPU setup at info level
+            return subprocess.Popen([str(VIEWER_BINARY), server.url], env=env)
+        print(f"native viewer not built yet ({VIEWER_BINARY} is missing; build it with "
+              f"`cargo build --release` in {VIEWER_DIR}); opening the browser instead", file=sys.stderr)
+    server.open_browser()
+    return None
+
+
+def wait(server: MapServer, viewer: subprocess.Popen | None) -> None:
+    """Keep serving until Ctrl-C, or with the native viewer until its window is closed.
+
+    A viewer that fails (no usable GPU, say) leaves the map in the browser instead.
+    """
+    if viewer is None:
+        server.serve_forever()
+        return
+    try:
+        status = viewer.wait()
+    except KeyboardInterrupt:  # Ctrl-C reaches the viewer too and closes it
+        stop_viewer(viewer)
+        server.stop()
+        return
+    if status != 0:
+        print(f"the native viewer exited with status {status}; opening the browser instead", file=sys.stderr)
         server.open_browser()
-    return server
+        server.serve_forever()
+        return
+    server.stop()
+
+
+def stop_viewer(viewer: subprocess.Popen | None) -> None:
+    if viewer is None:
+        return
+    try:
+        viewer.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        viewer.terminate()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -188,9 +252,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         if args.save:
             net_map.save(args.save)
-        server = serve(net_map, args)
+        server, viewer = serve(net_map, args)
         if server:
-            server.serve_forever()
+            wait(server, viewer)
         return 0
 
     # ----- a real scan -------------------------------------------------------
@@ -206,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
     log.info("sweeping %s from %s on %s%s", network, local.ip, local.interface,
              f" (gateway {local.gateway})" if local.gateway else "")
 
-    server = serve(build_map([], local, network, f"sweeping {network}…"), args)
+    server, viewer = serve(build_map([], local, network, f"sweeping {network}…"), args)
 
     def publish(hosts: list[Host], stage: str) -> None:
         log.info("%s", stage)
@@ -217,6 +281,7 @@ def main(argv: list[str] | None = None) -> int:
         hosts = asyncio.run(run_scan(args, local, network, publish))
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
+        stop_viewer(viewer)
         if server:
             server.stop()
         return 130
@@ -226,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
         net_map.save(args.save)
         log.info("saved %d hosts to %s", len(net_map), args.save)
     if server:
-        server.serve_forever()
+        wait(server, viewer)
     return 0
 
 

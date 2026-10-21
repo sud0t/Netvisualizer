@@ -1,7 +1,6 @@
 //! Colours, declared once. This table mirrors the custom properties at the top
 //! of `pynmapper/graphics/web/style.css`; when one changes, change the other.
 //! (theme.js reads them from the stylesheet at runtime; here they are constants.)
-#![allow(dead_code)] // the text and HUD colours are used from step 7.2 (labels) and 7.3 (sidebar) on
 
 use bevy::prelude::Color;
 

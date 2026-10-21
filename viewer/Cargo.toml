@@ -28,6 +28,10 @@ clap = { version = "4.6", features = ["derive"] }
 # Same wgpu Bevy renders with; used directly only to probe for a GPU adapter
 # before Bevy starts (see render_settings in main.rs).
 wgpu = { version = "30", default-features = false }
+# Live mode (fetch.rs): blocking HTTP on a plain thread, no async runtime.
+# The map server is Python's http.server on plain HTTP, so the defaults (rustls
+# with ring, gzip) are left out. Same major version bevy_asset's `http` uses.
+ureq = { version = "3.4", default-features = false }
 
 [features]
 # `cargo run --features dev` links Bevy as a shared library: rebuilds after a

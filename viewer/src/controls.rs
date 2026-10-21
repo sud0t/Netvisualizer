@@ -9,7 +9,7 @@
 
 use std::f32::consts::FRAC_PI_2;
 
-use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
+use bevy::input::mouse::{AccumulatedMouseScroll, MouseMotion, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
@@ -26,9 +26,21 @@ const MOVE_KEYS: [KeyCode; 6] = [
     KeyCode::KeyE,
 ];
 const FAST_KEYS: [KeyCode; 2] = [KeyCode::ShiftLeft, KeyCode::ShiftRight];
+/// `e.ctrlKey || e.metaKey || e.altKey`: with one of these held a key is a
+/// shortcut for someone else (Ctrl+S, Alt+Tab), never a fly key.
+const COMMAND_MODIFIERS: [KeyCode; 6] = [
+    KeyCode::ControlLeft,
+    KeyCode::ControlRight,
+    KeyCode::AltLeft,
+    KeyCode::AltRight,
+    KeyCode::SuperLeft,
+    KeyCode::SuperRight,
+];
 /// Never quite straight up or down.
 const PITCH_LIMIT: f32 = FRAC_PI_2 - 0.02;
-/// Pointer lock occasionally reports one huge jump.
+/// A single motion event bigger than this is a glitch, not a hand movement.
+/// Checked per event, as controls.js does: a frame's total can legitimately
+/// exceed it during a quick turn on a slow frame.
 const MAX_LOOK_DELTA_PX: f32 = 300.0;
 /// y of the approach direction: never fly in from below.
 const MIN_FLY_ELEVATION: f32 = 0.2;
@@ -202,6 +214,11 @@ pub fn fly_to_pose(camera_position: Vec3, target: Vec3, distance: f32) -> (Vec3,
     (position, rotation)
 }
 
+/// Ctrl, Alt or Super is held (Shift is not a command modifier: it means fast).
+pub fn command_modifier_held(keys: &ButtonInput<KeyCode>) -> bool {
+    keys.any_pressed(COMMAND_MODIFIERS)
+}
+
 /// (right, up, back), each -1, 0 or 1, from the held movement keys.
 pub fn movement_input(keys: &ButtonInput<KeyCode>) -> Vec3 {
     let axis = |positive: KeyCode, negative: KeyCode| {
@@ -247,7 +264,7 @@ fn read_keyboard(
     mut controls: ResMut<FlyControls>,
     mut camera: Single<&mut Transform, With<MainCamera>>,
 ) {
-    if !controls.enabled || ui.keyboard {
+    if !controls.enabled || ui.keyboard || command_modifier_held(&keys) {
         return;
     }
     if keys.any_just_pressed(MOVE_KEYS) {
@@ -258,9 +275,10 @@ fn read_keyboard(
 
 /// Right button held = look. The cursor is locked and hidden meanwhile, which
 /// is what `requestPointerLock` did in the browser: no screen edge to hit.
+/// (Bevy falls back to confining the cursor where locking is unsupported, X11.)
 fn mouse_look(
     buttons: Res<ButtonInput<MouseButton>>,
-    motion: Res<AccumulatedMouseMotion>,
+    mut motion: MessageReader<MouseMotion>,
     ui: Res<UiInput>,
     window: Single<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
     mut controls: ResMut<FlyControls>,
@@ -279,14 +297,12 @@ fn mouse_look(
         cursor.grab_mode = CursorGrabMode::None;
         cursor.visible = true;
     }
-    if controls.looking {
-        let delta = motion.delta;
-        if delta.x.abs() > MAX_LOOK_DELTA_PX
-            || delta.y.abs() > MAX_LOOK_DELTA_PX
-            || delta == Vec2::ZERO
-        {
-            return;
-        }
+    let delta: Vec2 = motion
+        .read()
+        .map(|event| event.delta)
+        .filter(|d| d.x.abs() <= MAX_LOOK_DELTA_PX && d.y.abs() <= MAX_LOOK_DELTA_PX)
+        .sum();
+    if controls.looking && delta != Vec2::ZERO {
         controls.look(delta.x, delta.y, &mut camera);
     }
 }
@@ -310,9 +326,12 @@ fn mouse_wheel(
 }
 
 /// `update(dt)`: step the tween if there is one, else fly with damping.
+/// Keys typed into the filter box (or pressed with Ctrl/Alt/Super) count as
+/// released, so the camera coasts to a stop instead of flying off.
 fn move_camera(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    ui: Res<UiInput>,
     mut controls: ResMut<FlyControls>,
     mut camera: Single<&mut Transform, With<MainCamera>>,
 ) {
@@ -331,13 +350,18 @@ fn move_camera(
     if !controls.enabled {
         return;
     }
+    let input = if ui.keyboard || command_modifier_held(&keys) {
+        Vec3::ZERO
+    } else {
+        movement_input(&keys)
+    };
     let speed = controls.speed
         * if controls.fast(&keys) {
             controls.fast_multiplier
         } else {
             1.0
         };
-    let target = velocity_target(movement_input(&keys), camera.rotation, speed);
+    let target = velocity_target(input, camera.rotation, speed);
     let k = (controls.damping * dt).min(1.0);
     controls.velocity = controls.velocity.lerp(target, k);
     if controls.velocity.length_squared() < 1e-6 {
@@ -359,16 +383,25 @@ mod tests {
 
     /// A headless app: fixed 16 ms frames, input resources driven by hand
     /// (no InputPlugin, so `just_pressed` is ours to clear), one camera.
+    /// With `window`, a primary window entity too, for the mouse-look system.
     fn test_app() -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME))
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<ButtonInput<MouseButton>>()
-            .init_resource::<AccumulatedMouseMotion>()
+            .add_message::<MouseMotion>()
             .init_resource::<AccumulatedMouseScroll>()
             .init_resource::<UiInput>()
             .add_plugins(ControlsPlugin);
+        app.world_mut().spawn((
+            PrimaryWindow,
+            Window {
+                focused: true,
+                ..default()
+            },
+            CursorOptions::default(),
+        ));
         app.world_mut()
             .spawn((MainCamera, Transform::from_xyz(0.0, 0.0, 10.0)));
         app.update(); // first frame has no delta
@@ -392,6 +425,14 @@ mod tests {
             .query_filtered::<&Transform, With<MainCamera>>()
             .single(app.world())
             .unwrap()
+    }
+
+    fn cursor_options(app: &mut App) -> CursorOptions {
+        app.world_mut()
+            .query::<&CursorOptions>()
+            .single(app.world())
+            .unwrap()
+            .clone()
     }
 
     fn press(app: &mut App, key: KeyCode) {
@@ -576,6 +617,80 @@ mod tests {
             .unit = MouseScrollUnit::Pixel;
         frames(&mut app, 1);
         assert_eq!(app.world().resource::<FlyControls>().speed, 1.0);
+    }
+
+    #[test]
+    fn keys_typed_into_a_text_box_or_with_ctrl_do_not_fly() {
+        let mut app = test_app();
+        app.world_mut().resource_mut::<UiInput>().keyboard = true;
+        press(&mut app, KeyCode::KeyW);
+        frames(&mut app, 30);
+        assert_eq!(camera(&mut app).translation, Vec3::new(0.0, 0.0, 10.0));
+        assert!(!app.world().resource::<FlyControls>().user_moved);
+
+        let mut app = test_app();
+        press(&mut app, KeyCode::ControlLeft);
+        press(&mut app, KeyCode::KeyS); // Ctrl+S
+        frames(&mut app, 30);
+        assert_eq!(camera(&mut app).translation, Vec3::new(0.0, 0.0, 10.0));
+        assert!(!app.world().resource::<FlyControls>().user_moved);
+    }
+
+    #[test]
+    fn right_drag_looks_and_only_single_glitch_events_are_dropped() {
+        let mut app = test_app();
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Right);
+        frames(&mut app, 1);
+        assert!(app.world().resource::<FlyControls>().looking);
+        let cursor = cursor_options(&mut app);
+        assert_eq!(cursor.grab_mode, CursorGrabMode::Locked);
+        assert!(!cursor.visible);
+
+        // Two 200 px events in one slow frame: a quick turn, both count.
+        let yaw = app.world().resource::<FlyControls>().yaw;
+        for _ in 0..2 {
+            app.world_mut().write_message(MouseMotion {
+                delta: Vec2::new(200.0, 0.0),
+            });
+        }
+        frames(&mut app, 1);
+        let turned = app.world().resource::<FlyControls>().yaw - yaw;
+        assert!((turned + 400.0 * 0.0022).abs() < 1e-5, "turned {turned}");
+
+        // One 1000 px event is a glitch and is ignored on its own.
+        let yaw = app.world().resource::<FlyControls>().yaw;
+        app.world_mut().write_message(MouseMotion {
+            delta: Vec2::new(1000.0, 0.0),
+        });
+        app.world_mut().write_message(MouseMotion {
+            delta: Vec2::new(10.0, 0.0),
+        });
+        frames(&mut app, 1);
+        let turned = app.world().resource::<FlyControls>().yaw - yaw;
+        assert!((turned + 10.0 * 0.0022).abs() < 1e-5, "turned {turned}");
+
+        // Releasing the button gives the cursor back.
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .release(MouseButton::Right);
+        frames(&mut app, 1);
+        assert!(!app.world().resource::<FlyControls>().looking);
+        let cursor = cursor_options(&mut app);
+        assert_eq!(cursor.grab_mode, CursorGrabMode::None);
+        assert!(cursor.visible);
+    }
+
+    #[test]
+    fn right_click_over_the_sidebar_does_not_start_looking() {
+        let mut app = test_app();
+        app.world_mut().resource_mut::<UiInput>().pointer = true;
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Right);
+        frames(&mut app, 1);
+        assert!(!app.world().resource::<FlyControls>().looking);
     }
 
     #[test]

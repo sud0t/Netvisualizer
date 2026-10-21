@@ -33,6 +33,17 @@ pub fn fly_distance(radius: f32) -> f32 {
     4.0 + radius * 6.0
 }
 
+/// `picker.select(id, { fly })` from anywhere but the 3D view: the host list,
+/// the details card's buttons, F and Escape, `--select`. Applied in the
+/// Picking set, so a request written by the egui pass lands next frame.
+#[derive(Message, Debug, Clone, PartialEq, Eq)]
+pub struct SelectHost {
+    /// The host to select; `None` deselects. An id not in the map deselects too.
+    pub id: Option<String>,
+    /// Also fly to the host, as a double click would.
+    pub fly: bool,
+}
+
 #[derive(Resource, Debug, Default)]
 pub struct Picker {
     /// Node under the pointer.
@@ -90,12 +101,14 @@ pub struct PickingPlugin;
 impl Plugin for PickingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Picker>()
+            .add_message::<SelectHost>()
             .init_gizmo_group::<SelectionGizmos>()
             .add_systems(Startup, configure_ring_gizmos)
             .add_systems(
                 Update,
                 (
                     refresh_after_rebuild,
+                    apply_requests,
                     hover,
                     clicks,
                     apply_states,
@@ -179,6 +192,24 @@ fn refresh_after_rebuild(graph: Res<Graph>, mut picker: ResMut<Picker>) {
         .is_some_and(|id| !graph.nodes.contains_key(id))
     {
         picker.select(None);
+    }
+}
+
+/// Apply [`SelectHost`] requests in the order they were written.
+fn apply_requests(
+    mut requests: MessageReader<SelectHost>,
+    graph: Res<Graph>,
+    nodes: Query<(&Node, &Transform)>,
+    camera: Single<&Transform, (With<MainCamera>, Without<Node>)>,
+    mut picker: ResMut<Picker>,
+    mut controls: ResMut<FlyControls>,
+) {
+    for request in requests.read() {
+        let id = request.id.clone().filter(|id| graph.nodes.contains_key(id));
+        picker.select(id);
+        if request.fly {
+            fly_to_selected(&picker, &graph, &nodes, &mut controls, &camera);
+        }
     }
 }
 
