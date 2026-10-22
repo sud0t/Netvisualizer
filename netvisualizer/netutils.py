@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Network discovery for Pynmapper.
+"""Network discovery for Netvisualizer.
 
 - netutils.py finds hosts and fills in their values (``Host`` objects from model.py).
 - __main__.py decides which of these steps run and in what order.
@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from ipaddress import IPv4Address, IPv4Network, ip_address, ip_network
 from itertools import batched
 
-from pynmapper.model import Host, Port
+from netvisualizer.model import Host, Port
 
 log = logging.getLogger(__name__)
 

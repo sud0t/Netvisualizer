@@ -1,10 +1,10 @@
-"""Graphics layer for Pynmapper, Python side.
+"""Graphics layer for Netvisualizer, Python side.
 
-Everything here consumes ``pynmapper.model.Host`` objects (produced by the
+Everything here consumes ``netvisualizer.model.Host`` objects (produced by the
 networking code) and turns them into a :class:`NetworkMap`, the single JSON
 document the native viewer in ``viewer/`` (Rust) draws. Nothing in this
 package performs network I/O other than serving that document; the only place
-that knows about the backend's output shape is :mod:`pynmapper.graphics.adapters`.
+that knows about the backend's output shape is :mod:`netvisualizer.graphics.adapters`.
 
 Typical use from the entry point::
 

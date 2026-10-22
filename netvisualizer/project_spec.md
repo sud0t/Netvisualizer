@@ -1,4 +1,4 @@
-# 3D graphical network mapper in Python (maybe Rust as well in the future)
+# 3D graphical network mapper in Python and Rust
 
 ## Your role
 You are going to be handling the graphics side of this project (Rust), do not touch the actual network mapping part as that is what I am using to learn, even if there are vast optimizations to be made for the actual network mapping still do not touch it. Your goal is to write the graphics so that they are compatible with what I write for the networking part.
@@ -30,9 +30,9 @@ You are going to be handling the graphics side of this project (Rust), do not to
 - **Done 2026-10-21** (Milestone 4).
 
 ### Launching (implemented 2026-10-20, viewer 2026-10-21)
-- `python -m pynmapper` detects the interface with the default route, sweeps its subnet, starts the map server, starts the viewer on it, then publishes the map again after each stage (sweep, names, ports) so it redraws live. Options: a CIDR argument, `-i IFACE`, `--ports [LIST]`, `--no-names`, `--timeout`, `--concurrency`, `--save FILE`, `--json FILE`, `--no-open`, `--no-serve`, `--port`, `--host`, `--list-interfaces`.
-- The viewer is `viewer/target/release/pynmapper-viewer <server url>`; closing its window ends the program, and a viewer that exits non-zero (no usable GPU, say) makes the program exit with status 1. Without the binary, the program stops before scanning and prints the `cargo build --release` hint. `--no-open` serves until Ctrl-C without starting the viewer, and needs no binary; neither does `--no-serve`.
-- `python -m pynmapper --json viewer/tests/fixtures/demo.json` shows a saved fake LAN with no network needed; add `--no-open` to serve it for `cargo run --features dev` in `viewer/` to follow (day-to-day viewer development).
+- `python -m netvisualizer` detects the interface with the default route, sweeps its subnet, starts the map server, starts the viewer on it, then publishes the map again after each stage (sweep, names, ports) so it redraws live. Options: a CIDR argument, `-i IFACE`, `--ports [LIST]`, `--no-names`, `--timeout`, `--concurrency`, `--save FILE`, `--json FILE`, `--no-open`, `--no-serve`, `--port`, `--host`, `--list-interfaces`.
+- The viewer is `viewer/target/release/netvisualizer-viewer <server url>`; closing its window ends the program, and a viewer that exits non-zero (no usable GPU, say) makes the program exit with status 1. Without the binary, the program stops before scanning and prints the `cargo build --release` hint. `--no-open` serves until Ctrl-C without starting the viewer, and needs no binary; neither does `--no-serve`.
+- `python -m netvisualizer --json viewer/tests/fixtures/demo.json` shows a saved fake LAN with no network needed; add `--no-open` to serve it for `cargo run --features dev` in `viewer/` to follow (day-to-day viewer development).
 
 ### Hostnames
 - `netutils.resolve_hostnames(hosts)` (2026-10-20) writes `host.hostname` straight into the Host objects, running the blocking `gethostbyaddr` calls in threads, 32 at a time, because every miss waits for the resolver's full timeout. The scanner's own name falls back to `socket.gethostname()`.
@@ -43,7 +43,7 @@ You are going to be handling the graphics side of this project (Rust), do not to
 
 The only coupling between the networking code and the graphics code is a `Host` object (and the JSON it serializes to). The networking code fills it in, the graphics code reads it, and neither imports the other.
 
-### `pynmapper/model.py` (written by Kyler, exists): `Host` and `Port`
+### `netvisualizer/model.py` (written by Kyler, exists): `Host` and `Port`
 Lives in a neutral module, not in `netutils.py` and not in `graphics/`. Current shape (the graphics code consumes exactly this; `label` is a property):
 
 ```python
@@ -82,13 +82,13 @@ Notes:
 ## Graphics architecture
 
 ```
-pynmapper/
+netvisualizer/
   model.py                  # Host / Port (written by Kyler, shared contract)
   __main__.py               # entry point (argparse): scan, build the map, serve it, start the viewer
   netutils.py               # UNTOUCHED
   graphics/
     __init__.py             # public API: NetworkMap, Link, from_hosts, from_ping_sweep, MapServer
-    model.py                # NetworkMap/Link dataclasses + to_dict()/from_dict(); imports Host/Port from pynmapper.model
+    model.py                # NetworkMap/Link dataclasses + to_dict()/from_dict(); imports Host/Port from netvisualizer.model
     adapters.py             # from_hosts(list[Host], scanner_ip, ...) and from_ping_sweep(ips, scanner_ip, hostnames=None, ...)
     layout.py               # positions: scanner at origin, hosts on a ring/shells; pluggable for tree/force later
     server.py               # stdlib ThreadingHTTPServer: /api/health + /api/map (with revision); MapServer.update()
@@ -106,7 +106,7 @@ viewer/                     # the Rust viewer that draws the map (see Milestone 
               "position": [8.0, 0.0, 0.0]} ],
   "links": [ {"source": "192.168.1.50", "target": "192.168.1.10", "kind": "subnet"} ] }
 ```
-- Each host entry is the `Host` dataclass serialised field by field (so `ip`, `hostname`, `open_ports`, `is_local`, `extra` mirror `pynmapper/model.py` exactly and any field added there appears automatically), plus four graphics keys: `id`, `label`, `role`, `position`.
+- Each host entry is the `Host` dataclass serialised field by field (so `ip`, `hostname`, `open_ports`, `is_local`, `extra` mirror `netvisualizer/model.py` exactly and any field added there appears automatically), plus four graphics keys: `id`, `label`, `role`, `position`.
 - `label` = hostname if present else ip. `role` is one of scanner / gateway / host. `extra` is free-form and the viewer's details card renders it generically so new backend fields appear with zero viewer changes.
 - A ping sweep implies no topology, so links are a star from the scanner to each host until traceroute exists.
 
@@ -129,22 +129,22 @@ viewer/                     # the Rust viewer that draws the map (see Milestone 
 1. **done** `graphics/model.py`, `adapters.py`, `layout.py` + unit tests (`python -m unittest discover tests` from the repo root).
 2. **done** `server.py`: the map as JSON at `/api/map`, with a revision that goes up on every update, and `/api/health` to poll that revision cheaply.
 3. **done (2026-10-20)** `__main__.py` with argparse; real sweep end to end verified on the dev LAN (10 hosts, gateway with 6 open ports, 3.3 s with `--ports`).
-4. **done (2026-10-21):** native viewer in Rust with Bevy + bevy_egui, started by `python -m pynmapper`. 4.1 (skeleton) 2026-10-20; 4.2 (fly controls, picking, labels) and its review pass, 4.3 (sidebar, HUD, help, legend), 4.4 (live mode), 4.5 (Python wiring) and 4.6 (behaviour check) 2026-10-21. Plan and outcomes below.
+4. **done (2026-10-21):** native viewer in Rust with Bevy + bevy_egui, started by `python -m netvisualizer`. 4.1 (skeleton) 2026-10-20; 4.2 (fly controls, picking, labels) and its review pass, 4.3 (sidebar, HUD, help, legend), 4.4 (live mode), 4.5 (Python wiring) and 4.6 (behaviour check) 2026-10-21. Plan and outcomes below.
 5. Later: ARP enumeration (root), traceroute topology, UDP ports.
 
 ## Milestone 4: native viewer (Rust, Bevy + bevy_egui)
 
 ### Goal
-`python -m pynmapper` opens the map in a native window, with the controls and panel listed under "Viewer behaviour", and the map redraws live as the scan stages arrive. Python scans and serves the JSON.
+`python -m netvisualizer` opens the map in a native window, with the controls and panel listed under "Viewer behaviour", and the map redraws live as the scan stages arrive. Python scans and serves the JSON.
 
 ### Versions (checked on crates.io, 2026-10-20)
 - `/usr/sbin/rustc` and `cargo` are rustup proxies (the pacman package `rustup` provides `rust`); the default toolchain was stable 1.96.1. **Bevy 0.20 declares `rust-version = 1.97.1`** and refuses to build on older compilers, so `viewer/rust-toolchain.toml` pins `1.99.1` (the newest stable that day); rustup installs it on the first `cargo` command inside `viewer/` and the default toolchain is left alone. bevy_egui 0.43.1 only needs 1.95. `rustup update` would make the pin redundant.
 - `bevy = "0.20.0"` (features `wayland`, `png`), `bevy_egui = "0.43.1"` (must be the release built for Bevy 0.20; check its README compatibility table before bumping either; added in 4.2 with `default-features = false, features = ["render", "default_fonts", "manage_clipboard"]`, so no `open_url` browser launcher and no bevy_picking bridge), `serde`, `serde_json` with `preserve_order` (host fields stay in Python's order for the details card), `clap` 4.6 (derive), `wgpu = "30"` (Bevy's own wgpu, used directly only to probe for a GPU adapter), and from 4.4 `ureq = "3.4"` with `default-features = false` (blocking HTTP on a background thread, no async runtime; the server is plain HTTP, so ureq's default rustls/ring and gzip are left out, which adds only ureq, ureq-proto, httparse, base64 and a few small crates; 3.x is also the major bevy_asset's own `http` feature uses).
-- `cargo run --features dev` links Bevy dynamically: the first build took 9 min 50 s on the dev laptop (12 threads), a rebuild after a source edit about 30 s, `cargo clippy` 2 min. The Python launcher (4.5) runs the static release build (`cargo build --release`, thin LTO; 6 min 20 s, `viewer/target/release/pynmapper-viewer`).
+- `cargo run --features dev` links Bevy dynamically: the first build took 9 min 50 s on the dev laptop (12 threads), a rebuild after a source edit about 30 s, `cargo clippy` 2 min. The Python launcher (4.5) runs the static release build (`cargo build --release`, thin LTO; 6 min 20 s, `viewer/target/release/netvisualizer-viewer`).
 
 ### Layout
 ```
-viewer/                       # cargo crate, binary name pynmapper-viewer
+viewer/                       # cargo crate, binary name netvisualizer-viewer
   Cargo.toml
   src/
     main.rs                   # clap args: URL (default http://127.0.0.1:8765) | --json FILE; builds the App, adds plugins
@@ -157,7 +157,7 @@ viewer/                       # cargo crate, binary name pynmapper-viewer
     ui.rs                     # egui: HUD (status/stage/speed), legend, help overlay, labels drawn with the egui painter, UiInput flags
     panel.rs                  # egui sidebar: filter, host list, generic details card
 ```
-All of these exist after 4.6, plus `theme.rs`, `Cargo.lock`, `rust-toolchain.toml` and `tests/fixtures/demo.json` (a saved 27-host fake LAN, also used by the Python tests and for trying the viewer with `python -m pynmapper --json`; any `--save` output can replace it, as long as the Rust tests' host and link counts are updated with it).
+All of these exist after 4.6, plus `theme.rs`, `Cargo.lock`, `rust-toolchain.toml` and `tests/fixtures/demo.json` (a saved 27-host fake LAN, also used by the Python tests and for trying the viewer with `python -m netvisualizer --json`; any `--save` output can replace it, as long as the Rust tests' host and link counts are updated with it).
 
 ### Steps
 - 4.1 **done 2026-10-20.** `cargo run --features dev -- --json scan.json` opens a window, draws spheres and links at the JSON positions, frames the camera (and re-frames on resize). Hosts without a position go on a fallback ring. Also in: `--exit-after-frames N` and `--screenshot FILE` (smoke test), the window title with the host count, the GPU-backend probe described below. A URL argument was accepted but not followed yet (that came in 4.4).
@@ -165,7 +165,7 @@ All of these exist after 4.6, plus `theme.rs`, `Cargo.lock`, `rust-toolchain.tom
 - 4.3 **done 2026-10-21.** `panel.rs`: the sidebar is an egui `Area` anchored top right (a floating card, so egui knows the pointer is over UI and clicks never fall through to the scene); filter box (`/` focuses it and selects the old query, Enter selects and flies to the first match, Escape leaves it), count (`4 / 27`), collapse toggle; host list sorted by role, then name (unknown roles last, names case-insensitive), virtualised (only visible rows are laid out, so a /16 costs the same per frame as a /24), scrolls the selection into view; details card generic over `serde_json::Value` (scalars as rows, lists of objects as tables with the union of keys, objects nested, whole floats printed without a decimal point), scrolled back to the top on each new selection, "fly to" and close buttons. `ui.rs`: HUD (brand, status line red while the server is unreachable, speed, `?` button), legend, help overlay (`egui::Modal`; `?`/`h`, Escape or a click on the backdrop closes it), a custom egui style, pointer cursor over hosts. Framing uses the sidebar's width as the right inset (none when collapsed), recomputed on R and on resize. `SelectHost` message: every selection that does not come from a 3D click (list, card buttons, F, Escape, `--select`) goes through one system.
 - 4.4 **done 2026-10-21.** `fetch.rs`: a plain thread polls `/api/health` every 2 s and downloads `/api/map` only when the revision changes, sending a `FetchEvent` over `std::sync::mpsc`; the `Fetch` set (first in `Update`) moves it into `MapDocument`, which is now `Option<MapDoc>` (`None` until the first map arrives). Outages show `server unreachable, retrying… (reason)`, and the summary comes back once the server answers. The selection survives because it is kept by id; re-framing stops once the user moves (`Graph.drawn` keeps the empty start-up graph from counting as the first map).
 - 4.5 **done 2026-10-21.** `__main__.py` starts the release binary on the server URL and waits for its window to close; `--no-open` serves without it; see "Launching". README has the `cargo build --release` step and the Debian build packages.
-- 4.6 **done 2026-10-21.** Walked through the "Viewer behaviour" list above; `python -m pynmapper` opens the viewer by default.
+- 4.6 **done 2026-10-21.** Walked through the "Viewer behaviour" list above; `python -m netvisualizer` opens the viewer by default.
 
 ### Design decisions
 - Labels through the egui painter rather than Bevy text billboards: no font assets to ship, trivial distance fade, and they sit in the same overlay as the sidebar.
@@ -187,7 +187,7 @@ All of these exist after 4.6, plus `theme.rs`, `Cargo.lock`, `rust-toolchain.tom
 
 ### Verification
 - `cargo build --release` and `cargo test` (map parsing from the real `scan.json`, fallback ring, port-table column union). After 4.1: 16 tests pass (`cargo test --features dev`: demo fixture parsing, unknown keys kept in order, lenient positions, status from `status`/`extra.status`, fallback ring, bounds, framing geometry with and without insets, smoothstep); `cargo clippy --all-targets` is clean and `cargo fmt` applied.
-- A `--exit-after-frames N` flag so `pynmapper-viewer --json scan.json --exit-after-frames 120` is a smoke test that opens, renders and quits with status 0; `--screenshot FILE` saves a PNG 30 frames before the exit, which is how a session without eyes on the window checks the picture. 150 frames of the demo map take about 2 s end to end. `--select 192.168.1.1 --fly` adds a selection and a fly-to, so one screenshot shows the ring, the selected label style and the fly-to pose.
+- A `--exit-after-frames N` flag so `netvisualizer-viewer --json scan.json --exit-after-frames 120` is a smoke test that opens, renders and quits with status 0; `--screenshot FILE` saves a PNG 30 frames before the exit, which is how a session without eyes on the window checks the picture. 150 frames of the demo map take about 2 s end to end. `--select 192.168.1.1 --fly` adds a selection and a fly-to, so one screenshot shows the ring, the selected label style and the fly-to pose.
 - After 4.2: 32 tests pass, `cargo clippy --all-targets` clean, `cargo fmt` applied.
 - After 4.6 (2026-10-21): 57 Rust tests pass (`cargo test --features dev`; new: the polling protocol against a fake server, a real HTTP round trip through ureq to a local socket that answers like Python's http.server, a refused port, the shortcut keys driven by `KeyboardInput` messages, right-drag look with per-event glitch filtering and cursor grab, keys ignored while typing or with Ctrl, sidebar sorting/filtering/framing inset, table columns, whole-float numbers, glyph coverage), `cargo clippy --features dev --all-targets` clean, `cargo fmt` applied, `cargo build --release` clean.
 - End to end (2026-10-21, Xvfb + Mesa lavapipe, release binary, driven with xdotool): a fake scan published through the real `serve()` / `build_map()` / `open_viewer()` / `wait()` showed the scanner alone at "sweeping…", 27 unnamed hosts at rev 1 (camera glided to the new framing), then hostnames and ports at rev 2 with the selection and camera kept (the user had flown). Checked by screenshot: host-list click = select + fly, details card, R (sidebar-aware framing), `?` and Escape order (help first, then deselect), backdrop click, `/` + typing + Enter, WASD ignored while typing, click and double click on spheres, right-drag look, wheel, sidebar collapse, hover and "down" colouring, "server unreachable" then recovery, and closing the window stops the server.
@@ -196,6 +196,6 @@ All of these exist after 4.6, plus `theme.rs`, `Cargo.lock`, `rust-toolchain.tom
 - **Still to do by hand on the dev machine:** pointer lock and right-drag look under Hyprland (Wayland locks the pointer; X11 here only confines it), wheel feel and double-click timing on real hardware.
 
 ### Environment facts
-- Repo root `Pynmapper/` has an empty `pyproject.toml` and `.venv` (Python 3.14, numpy, scapy 2.7 installed). `pynmapper/` is a package (`__init__.py`, `__main__.py`); run with `python -m pynmapper` from the repo root; internal imports are absolute (`from pynmapper.model import Host`).
+- Repo root `Netvisualizer/` has an empty `pyproject.toml` and `.venv` (Python 3.14, numpy, scapy 2.7 installed). `netvisualizer/` is a package (`__init__.py`, `__main__.py`); run with `python -m netvisualizer` from the repo root; internal imports are absolute (`from netvisualizer.model import Host`).
 - Graphics adds no Python dependencies (http.server, json, dataclasses, threading only). Networking uses the system `ping`, `socket`, `asyncio`, and scapy only for the routing table (optional).
 - Dev machine: Hyprland (Wayland) on a hybrid Intel + NVIDIA Quadro T1000 laptop, 12 threads; the Hyprland config exports `WGPU_BACKEND=gl` and `WINIT_UNIX_BACKEND=x11` (the latter is ignored by winit 0.30). Hyprland tiles new windows, so the viewer rarely gets its requested 1280×720; framing re-runs on resize.

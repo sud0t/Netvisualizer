@@ -1,4 +1,4 @@
-"""Tests for pynmapper.graphics.server: /api/map, /api/health, revisions."""
+"""Tests for netvisualizer.graphics.server: /api/map, /api/health, revisions."""
 
 import json
 import unittest
@@ -6,8 +6,8 @@ import urllib.error
 import urllib.request
 from ipaddress import ip_address
 
-from pynmapper.graphics import MapServer, NetworkMap, from_hosts
-from pynmapper.model import Host
+from netvisualizer.graphics import MapServer, NetworkMap, from_hosts
+from netvisualizer.model import Host
 
 
 def get(url):

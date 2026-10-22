@@ -4026,6 +4026,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "netvisualizer-viewer"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_egui",
+ "clap",
+ "serde",
+ "serde_json",
+ "ureq",
+ "wgpu",
+]
+
+[[package]]
 name = "nix"
 version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4817,19 +4830,6 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
-
-[[package]]
-name = "pynmapper-viewer"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "bevy_egui",
- "clap",
- "serde",
- "serde_json",
- "ureq",
- "wgpu",
-]
 
 [[package]]
 name = "quick-error"

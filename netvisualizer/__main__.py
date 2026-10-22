@@ -1,11 +1,11 @@
-"""Pynmapper: find the hosts on a network and show them as a 3D map.
+"""Netvisualizer: find the hosts on a network and show them as a 3D map.
 
-    python -m pynmapper                      # detect the interface, sweep its subnet, open the map
-    python -m pynmapper 192.168.1.0/24       # sweep this network instead
-    python -m pynmapper --ports              # then try common TCP ports on the hosts that answered
-    python -m pynmapper --ports 22,80,8000-8010
-    python -m pynmapper --save last.json     # keep the result; --json last.json replays it later
-    python -m pynmapper --list-interfaces    # which networks this machine is on
+    python -m netvisualizer                      # detect the interface, sweep its subnet, open the map
+    python -m netvisualizer 192.168.1.0/24       # sweep this network instead
+    python -m netvisualizer --ports              # then try common TCP ports on the hosts that answered
+    python -m netvisualizer --ports 22,80,8000-8010
+    python -m netvisualizer --save last.json     # keep the result; --json last.json replays it later
+    python -m netvisualizer --list-interfaces    # which networks this machine is on
 
 - __main__.py decides which steps run and in what order (this file).
 - netutils.py finds hosts and fills in their values.
@@ -29,19 +29,19 @@ from collections.abc import Callable
 from ipaddress import IPv4Network, ip_network
 from pathlib import Path
 
-from pynmapper import graphics, netutils
-from pynmapper.graphics import MapServer, NetworkMap
-from pynmapper.graphics.server import DEFAULT_HOST, DEFAULT_PORT
-from pynmapper.model import Host
-from pynmapper.netutils import LocalNetwork
+from netvisualizer import graphics, netutils
+from netvisualizer.graphics import MapServer, NetworkMap
+from netvisualizer.graphics.server import DEFAULT_HOST, DEFAULT_PORT
+from netvisualizer.model import Host
+from netvisualizer.netutils import LocalNetwork
 
-log = logging.getLogger("pynmapper")
+log = logging.getLogger("netvisualizer")
 
 MAX_SWEEP = 65536  # addresses; a /16 takes a few minutes, anything bigger is a mistake
 
 # The viewer, built with `cargo build --release` in viewer/.
 VIEWER_DIR = Path(__file__).resolve().parent.parent / "viewer"
-VIEWER_BINARY = VIEWER_DIR / "target" / "release" / ("pynmapper-viewer.exe" if os.name == "nt" else "pynmapper-viewer")
+VIEWER_BINARY = VIEWER_DIR / "target" / "release" / ("netvisualizer-viewer.exe" if os.name == "nt" else "netvisualizer-viewer")
 
 Publish = Callable[[list[Host], str], None]  # (hosts so far, stage text) -> redraw the map
 
@@ -85,9 +85,9 @@ def parse_network(text: str) -> IPv4Network:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m pynmapper",
+        prog="python -m netvisualizer",
         description="Find the hosts on a network and show them as a 3D map in its own window.",
-        epilog="examples:  python -m pynmapper --ports        python -m pynmapper 10.0.0.0/24 --save scan.json",
+        epilog="examples:  python -m netvisualizer --ports        python -m netvisualizer 10.0.0.0/24 --save scan.json",
     )
     parser.add_argument("network", nargs="?", type=parse_network,
                         help="network to sweep in CIDR form, e.g. 192.168.1.0/24 "
@@ -165,7 +165,7 @@ def serve(net_map: NetworkMap, args: argparse.Namespace) -> tuple[MapServer | No
     if args.no_serve:
         return None, None
     server = MapServer(net_map, host=args.host, port=args.port).start()
-    print(f"Pynmapper map: {server.url}  (Ctrl-C to stop)", flush=True)
+    print(f"Netvisualizer map: {server.url}  (Ctrl-C to stop)", flush=True)
     viewer = None if args.no_open else open_viewer(server, quiet=not args.verbose)
     return server, viewer
 
@@ -222,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s" if args.verbose else "%(message)s",
     )
-    logging.getLogger("pynmapper.graphics").setLevel(logging.WARNING)  # the HTTP server is chatty at INFO
+    logging.getLogger("netvisualizer.graphics").setLevel(logging.WARNING)  # the HTTP server is chatty at INFO
 
     if args.list_interfaces:
         networks = netutils.list_local_networks()

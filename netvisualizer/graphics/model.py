@@ -43,7 +43,7 @@ from ipaddress import (
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from pynmapper.model import Host
+from netvisualizer.model import Host
 
 CONTRACT_VERSION = 1
 ROLES = ("scanner", "gateway", "host")

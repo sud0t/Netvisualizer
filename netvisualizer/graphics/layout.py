@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from ipaddress import ip_address
 
-from pynmapper.model import Host
+from netvisualizer.model import Host
 
 from .model import NetworkMap, Position, host_id
 

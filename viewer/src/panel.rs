@@ -4,7 +4,7 @@
 //! The details card is generic on purpose. Apart from a few keys that get a
 //! friendlier heading, every field of the host JSON is rendered as it comes
 //! (scalars as rows, lists of objects as tables, objects as nested rows), so a
-//! field added to pynmapper/model.py shows up here with no viewer change.
+//! field added to netvisualizer/model.py shows up here with no viewer change.
 //!
 //! The sidebar is an egui `Area` (a floating card) rather than an egui
 //! `Panel`, so egui counts the pointer as over the UI there and clicks never

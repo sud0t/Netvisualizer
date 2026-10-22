@@ -1,13 +1,13 @@
 [package]
-name = "pynmapper-viewer"
+name = "netvisualizer-viewer"
 version = "0.1.0"
 edition = "2024"
-description = "Native viewer for Pynmapper network maps (Bevy); reads the JSON map the Python side serves or saves"
+description = "Native viewer for Netvisualizer network maps (Bevy); reads the JSON map the Python side serves or saves"
 license = "MIT"
 publish = false
 
 [[bin]]
-name = "pynmapper-viewer"
+name = "netvisualizer-viewer"
 path = "src/main.rs"
 
 [dependencies]

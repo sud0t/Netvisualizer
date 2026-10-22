@@ -241,7 +241,7 @@ fn draw_hud(
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 12.0;
-                        ui.add(egui::Label::new(text("Pynmapper", theme::TEXT).strong()).extend());
+                        ui.add(egui::Label::new(text("Netvisualizer", theme::TEXT).strong()).extend());
                         let color = if status.error {
                             theme::ERROR
                         } else {

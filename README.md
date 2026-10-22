@@ -1,4 +1,4 @@
-# Pynmapper
+# Netvisualizer
 
 Finds the hosts on your network and shows them as a 3D map in its own window.
 
@@ -18,18 +18,18 @@ cargo build --release      # about 10 min the first time; needs Rust (rustup)
 `rust-toolchain.toml` pins the compiler Bevy needs (rustc 1.99.1); rustup
 installs it on the first `cargo` command there. On Debian/Ubuntu the build also
 needs `libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev`. Until the
-viewer is built, `python -m pynmapper` stops and prints the build command.
+viewer is built, `python -m netvisualizer` stops and prints the build command.
 
 ## Run
 
 ```sh
-python -m pynmapper                      # detect the interface, sweep its subnet, open the map
-python -m pynmapper 192.168.1.0/24       # sweep this network instead
-python -m pynmapper --ports              # then try common TCP ports on the hosts that answered
-python -m pynmapper --ports 22,80,8000-8010
-python -m pynmapper --save last.json     # keep the result; --json last.json replays it later
-python -m pynmapper --list-interfaces    # which networks this machine is on
-python -m pynmapper --help               # everything else
+python -m netvisualizer                      # detect the interface, sweep its subnet, open the map
+python -m netvisualizer 192.168.1.0/24       # sweep this network instead
+python -m netvisualizer --ports              # then try common TCP ports on the hosts that answered
+python -m netvisualizer --ports 22,80,8000-8010
+python -m netvisualizer --save last.json     # keep the result; --json last.json replays it later
+python -m netvisualizer --list-interfaces    # which networks this machine is on
+python -m netvisualizer --help               # everything else
 ```
 
 The map server starts at `http://127.0.0.1:8765/` before the scan does, and
@@ -53,7 +53,7 @@ Ctrl-C, for a viewer started by hand (below), or on another machine with
 ## Viewer development
 
 `viewer/` is a Rust crate (Bevy 0.20 + bevy_egui) that follows a map server,
-or draws a saved map. `python -m pynmapper --json viewer/tests/fixtures/demo.json --no-open`
+or draws a saved map. `python -m netvisualizer --json viewer/tests/fixtures/demo.json --no-open`
 in another terminal serves a fake LAN to follow:
 
 ```sh
@@ -76,7 +76,7 @@ prints a line and falls back to another one on its own.
 ## Layout
 
 ```
-pynmapper/
+netvisualizer/
   __main__.py     which steps run, in what order; starts the map server, then the viewer
   netutils.py     finds hosts and fills in their values (sweep, names, ports)
   model.py        Host and Port: the one shape shared by both sides

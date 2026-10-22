@@ -115,7 +115,7 @@ class MapServer:
         self._httpd.daemon_threads = True
         self.port = self._httpd.server_address[1]
         self._thread = threading.Thread(
-            target=self._httpd.serve_forever, kwargs={"poll_interval": 0.1}, name="pynmapper-http", daemon=True
+            target=self._httpd.serve_forever, kwargs={"poll_interval": 0.1}, name="netvisualizer-http", daemon=True
         )
         self._thread.start()
         log.info("serving map at %s", self.url)

@@ -11,10 +11,10 @@
   "hosts": [
     {
       "id": "192.168.1.50",
-      "label": "pynmapper-host.lan",
+      "label": "netvisualizer-host.lan",
       "role": "scanner",
       "ip": "192.168.1.50",
-      "hostname": "pynmapper-host.lan",
+      "hostname": "netvisualizer-host.lan",
       "open_ports": [
         {
           "number": 22,

@@ -15,10 +15,10 @@ import unittest
 from ipaddress import IPv4Address, ip_network
 from unittest import mock
 
-from pynmapper import __main__ as cli
-from pynmapper import netutils
-from pynmapper.model import Host, Port
-from pynmapper.netutils import LocalNetwork
+from netvisualizer import __main__ as cli
+from netvisualizer import netutils
+from netvisualizer.model import Host, Port
+from netvisualizer.netutils import LocalNetwork
 
 # A copy of this development machine's routing table as scapy reports it:
 # (net, mask, gateway, iface, source, metric). wlan0 has the default route.

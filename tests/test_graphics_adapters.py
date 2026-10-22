@@ -1,10 +1,10 @@
-"""Tests for pynmapper.graphics.adapters: backend output -> NetworkMap."""
+"""Tests for netvisualizer.graphics.adapters: backend output -> NetworkMap."""
 
 import unittest
 from ipaddress import ip_address
 
-from pynmapper.graphics import apply_hostnames, from_hosts, from_ping_sweep, host_id
-from pynmapper.model import Host
+from netvisualizer.graphics import apply_hostnames, from_hosts, from_ping_sweep, host_id
+from netvisualizer.model import Host
 
 
 def hosts(*addrs):

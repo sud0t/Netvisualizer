@@ -1,4 +1,4 @@
-"""Tests for pynmapper.graphics.model: the JSON contract and round-tripping."""
+"""Tests for netvisualizer.graphics.model: the JSON contract and round-tripping."""
 
 import json
 import tempfile
@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from ipaddress import IPv4Address, ip_address
 from pathlib import Path
 
-from pynmapper.graphics import CONTRACT_VERSION, Link, NetworkMap, from_hosts, host_id
-from pynmapper.graphics.model import host_from_dict, host_to_dict
-from pynmapper.model import Host, Port
+from netvisualizer.graphics import CONTRACT_VERSION, Link, NetworkMap, from_hosts, host_id
+from netvisualizer.graphics.model import host_from_dict, host_to_dict
+from netvisualizer.model import Host, Port
 
 # A saved 27-host map, also the Rust viewer's test fixture: every role, ports, extras.
 FIXTURE = Path(__file__).resolve().parent.parent / "viewer" / "tests" / "fixtures" / "demo.json"

@@ -1,4 +1,4 @@
-"""Tests for how python -m pynmapper starts the viewer and waits for it."""
+"""Tests for how python -m netvisualizer starts the viewer and waits for it."""
 
 import contextlib
 import io
@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from pynmapper import __main__ as cli
+from netvisualizer import __main__ as cli
 
 # A saved map to replay with --json, so these tests never scan.
 SAVED_MAP = str(Path(__file__).resolve().parent.parent / "viewer" / "tests" / "fixtures" / "demo.json")
@@ -66,7 +66,7 @@ class OpenViewerTests(unittest.TestCase):
     def stand_in_viewer(self, exit_status=0):
         """An executable that records its arguments and RUST_LOG, then exits."""
         record = self.dir / "argv.txt"
-        script = self.dir / "pynmapper-viewer"
+        script = self.dir / "netvisualizer-viewer"
         script.write_text(f'#!/bin/sh\necho "$@" > "{record}"\necho "$RUST_LOG" >> "{record}"\nexit {exit_status}\n')
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
         return script, record

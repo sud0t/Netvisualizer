@@ -1,4 +1,4 @@
-//! Live mode: follow a running `python -m pynmapper` map server.
+//! Live mode: follow a running `python -m netvisualizer` map server.
 //!
 //! A plain thread asks `/api/health` for the revision every two seconds and
 //! downloads `/api/map` only when it changed, so the viewer can open before a
@@ -48,7 +48,7 @@ impl Fetcher {
         let base = base_url(url);
         let (tx, rx) = mpsc::channel();
         thread::Builder::new()
-            .name("pynmapper-fetch".into())
+            .name("netvisualizer-fetch".into())
             .spawn(move || poll_loop(&base, &tx))
             .expect("could not start the fetch thread");
         Fetcher(Mutex::new(rx))

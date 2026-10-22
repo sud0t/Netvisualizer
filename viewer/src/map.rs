@@ -1,10 +1,10 @@
-//! The JSON contract (`NetworkMap.to_dict()` in `pynmapper/graphics/model.py`)
+//! The JSON contract (`NetworkMap.to_dict()` in `netvisualizer/graphics/model.py`)
 //! as serde structs. This is the only thing the viewer knows about Python.
 //!
 //! Only the keys the viewer itself acts on are typed (`id`, `label`, `role`,
 //! `position` on a host; `source`/`target` on a link). Everything else a host
 //! carries (`ip`, `hostname`, `open_ports`, `extra`, and any field added to
-//! `pynmapper/model.py` later) is kept verbatim in [`Host::fields`], in the
+//! `netvisualizer/model.py` later) is kept verbatim in [`Host::fields`], in the
 //! order Python wrote it, so the generic details card in panel.rs can render
 //! it with no change here when the backend grows.
 
@@ -230,7 +230,7 @@ mod tests {
 
         let scanner = &doc.hosts[0];
         assert_eq!(scanner.role(), Role::Scanner);
-        assert_eq!(scanner.display_label(), "pynmapper-host.lan");
+        assert_eq!(scanner.display_label(), "netvisualizer-host.lan");
         assert_eq!(scanner.position, Some([0.0, 0.0, 0.0]));
         assert_eq!(scanner.status(), Status::Up);
 

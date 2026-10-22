@@ -11,7 +11,7 @@ from collections.abc import Iterable, Mapping
 from ipaddress import IPv4Address, IPv6Address, ip_address
 from typing import Any
 
-from pynmapper.model import Host
+from netvisualizer.model import Host
 
 from .layout import star_ring
 from .model import Layout, Link, NetworkMap, ScanInfo, host_id

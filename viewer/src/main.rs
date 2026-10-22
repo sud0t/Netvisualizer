@@ -1,4 +1,4 @@
-//! Native viewer for Pynmapper maps: the JSON that `python -m pynmapper`
+//! Native viewer for Netvisualizer maps: the JSON that `python -m netvisualizer`
 //! serves or saves, drawn in a Bevy window. scene.rs sets up the camera,
 //! lights, fog, floor and framing; graph.rs draws the hosts and links;
 //! controls.rs flies the camera; picking.rs handles hover, clicks and the
@@ -46,9 +46,9 @@ use crate::ui::{Help, Status, UiInput, UiPlugin};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "pynmapper-viewer",
+    name = "netvisualizer-viewer",
     version,
-    about = "Native viewer for Pynmapper network maps"
+    about = "Native viewer for Netvisualizer network maps"
 )]
 struct Args {
     /// Map server to follow: polls /api/health every 2 s and downloads
@@ -56,7 +56,7 @@ struct Args {
     #[arg(default_value = "http://127.0.0.1:8765")]
     url: String,
 
-    /// Draw a map saved with `python -m pynmapper --save FILE` instead of a server.
+    /// Draw a map saved with `python -m netvisualizer --save FILE` instead of a server.
     #[arg(long, value_name = "FILE")]
     json: Option<PathBuf>,
 
@@ -120,7 +120,7 @@ fn main() -> ExitCode {
             Ok(doc) => {
                 if doc.version > CONTRACT_VERSION {
                     eprintln!(
-                        "pynmapper-viewer: map contract version {} is newer than this viewer ({CONTRACT_VERSION})",
+                        "netvisualizer-viewer: map contract version {} is newer than this viewer ({CONTRACT_VERSION})",
                         doc.version
                     );
                 }
@@ -129,7 +129,7 @@ fn main() -> ExitCode {
                 (Some(doc), None)
             }
             Err(err) => {
-                eprintln!("pynmapper-viewer: could not load {}: {err}", path.display());
+                eprintln!("netvisualizer-viewer: could not load {}: {err}", path.display());
                 return ExitCode::from(1);
             }
         },
@@ -150,7 +150,7 @@ fn main() -> ExitCode {
         DefaultPlugins
             .set(WindowPlugin {
                 primary_window: Some(Window {
-                    title: "Pynmapper".into(),
+                    title: "Netvisualizer".into(),
                     ..default()
                 }),
                 ..default()
@@ -225,7 +225,7 @@ fn render_settings() -> WgpuSettings {
     });
     if block_on(instance.enumerate_adapters(backends)).is_empty() {
         eprintln!(
-            "pynmapper-viewer: WGPU_BACKEND={requested} is set but no GPU here supports that backend; \
+            "netvisualizer-viewer: WGPU_BACKEND={requested} is set but no GPU here supports that backend; \
              letting wgpu choose one instead"
         );
         settings.backends = Some(Backends::all());
@@ -308,10 +308,10 @@ fn debug_select(
     });
 }
 
-/// The window title: "Pynmapper · N hosts" once a map has been drawn.
+/// The window title: "Netvisualizer · N hosts" once a map has been drawn.
 fn update_title(graph: Res<Graph>, mut window: Single<&mut Window, With<PrimaryWindow>>) {
     if graph.is_changed() && graph.drawn {
-        window.title = format!("Pynmapper · {} hosts", graph.host_count);
+        window.title = format!("Netvisualizer · {} hosts", graph.host_count);
     }
 }
 

@@ -1,12 +1,12 @@
-"""Tests for pynmapper.graphics.layout."""
+"""Tests for netvisualizer.graphics.layout."""
 
 import math
 import unittest
 from ipaddress import ip_address
 
-from pynmapper.graphics import from_hosts, star_ring
-from pynmapper.graphics.layout import MIN_RADIUS, ring_plan
-from pynmapper.model import Host
+from netvisualizer.graphics import from_hosts, star_ring
+from netvisualizer.graphics.layout import MIN_RADIUS, ring_plan
+from netvisualizer.model import Host
 
 
 def lan(n, start=2):
