@@ -16,7 +16,8 @@ You are going to be handling the graphics side of this project (Rust), do not to
 ## TODO, in order
 New features come after migration steps; every step leaves the program working. Requests under "Feature requests" get planned into this list, and each is deleted from there once it is done.
 
-1. **Milestone 11: SSH/Telnet console.** For hosts with port 22 or 23 open, a console opened from the details card: asyncssh (and a telnet client) through the bridge, a terminal pane in egui.
+1. **Milestone 11: one action per operation.** Nothing touches the network on its own: every operation is a user action, a button in the window or a flag on the command line. The scan card grows into a toolbox with a button per operation: Ping sweep and ARP sweep take a network; Traceroute, Names, TCP ports and UDP ports work on the hosts already on the map (all of them, or the selected one); each has its options beside it, and its own progress and Cancel while it runs. The host list moves into the viewer and each action is a job on it: results merge into the map that is there (the same address stays one host; a MAC or a name fills a gap), so a map builds up step by step and `--save` keeps it. `--scan` stays as the shorthand for today's chain of stages; a flag per operation queues the same actions at start-up, in the order given.
+2. **Milestone 12: SSH/Telnet console.** For hosts with port 22 or 23 open, a console opened from the details card: asyncssh (and a telnet client) through the bridge, a terminal pane in egui.
 
 Done: Milestones 1–4 (the viewer) and 5 (the networking backend in Rust), 2026-10-21; 6 (MACs from the kernel's ARP table, vendor names through pandas, vendor labels), 7 (the ARP sweep on a packet socket, ping for what it cannot reach), 8 (traceroute: routers as nodes, the layout a tree), 9 (UDP ports) and 10 (the scan card: Scan, options, progress, Cancel), 2026-10-22.
 
