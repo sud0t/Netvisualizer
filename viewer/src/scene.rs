@@ -22,6 +22,9 @@ const FRAME_MARGIN: f32 = 1.08;
 /// World units per grid cell; major lines every `MAJOR_EVERY` cells.
 const GRID_CELL: f32 = 5.0;
 const MAJOR_EVERY: i64 = 5;
+/// The grid stops growing with the fog here: 201 lines each way, 33
+/// faded segments each, is already plenty of gizmo work per frame.
+const GRID_LINES_EACH_WAY_MAX: i64 = 100;
 /// The grid floats a little below the lowest ring.
 const FLOOR_Y: f32 = -3.0;
 /// Vertices per grid line, so the distance fade can vary along the line.
@@ -183,6 +186,9 @@ fn frame_when_needed(
     }
     if let Some(request) = requests.read().last() {
         animate = Some(request.animate);
+        // The view is the program's again, so hosts that arrive later are
+        // framed again too, until the user flies off once more.
+        controls.user_moved = false;
     }
     let Some(animate) = animate else {
         return;
@@ -367,7 +373,10 @@ fn draw_grid(
         (eye.x / major).floor() * major,
         (eye.z / major).floor() * major,
     );
-    let count = (far / GRID_CELL).ceil() as i64;
+    // Lines each way from the centre: as far as the fog reaches, but no
+    // more than a map spread far and wide (which pushes the fog out) can
+    // afford to draw every frame.
+    let count = ((far / GRID_CELL).ceil() as i64).min(GRID_LINES_EACH_WAY_MAX);
     let height_above_floor = (eye.y - FLOOR_Y).abs();
 
     let fade = |point: Vec3| 1.0 - smoothstep(near, far, eye.distance(point));

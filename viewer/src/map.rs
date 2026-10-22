@@ -234,8 +234,14 @@ impl MapDoc {
         }
     }
 
+    /// Parse a map. Of two hosts with one id the first is kept, as
+    /// [`MapDoc::from_hosts`] does with addresses: the graph and the sidebar
+    /// know a host by its id, and two entries would share one node.
     pub fn from_json(text: &str) -> Result<MapDoc, serde_json::Error> {
-        serde_json::from_str(text)
+        let mut doc: MapDoc = serde_json::from_str(text)?;
+        let mut seen = HashSet::new();
+        doc.hosts.retain(|host| seen.insert(host.id.clone()));
+        Ok(doc)
     }
 
     pub fn load(path: &Path) -> Result<MapDoc, Box<dyn Error>> {
@@ -345,11 +351,14 @@ pub fn position_from_value(value: &Value) -> Option<[f32; 3]> {
     }
     let mut out = [0.0f32; 3];
     for (slot, item) in out.iter_mut().zip(items) {
-        let number = item.as_f64()?;
+        // Checked after the cast: a finite f64 past f32's range becomes
+        // infinity, which would put the host, and the camera's framing of
+        // it, nowhere.
+        let number = item.as_f64()? as f32;
         if !number.is_finite() {
             return None;
         }
-        *slot = number as f32;
+        *slot = number;
     }
     Some(out)
 }
@@ -391,6 +400,18 @@ mod tests {
                 .iter()
                 .all(|l| l.kind.as_deref() == Some("subnet"))
         );
+    }
+
+    #[test]
+    fn of_two_entries_with_one_id_the_first_is_kept() {
+        let doc = MapDoc::from_json(
+            r#"{"hosts": [{"id": "10.0.0.2", "label": "first"}, {"id": "10.0.0.3"},
+                           {"id": "10.0.0.2", "label": "second"}]}"#,
+        )
+        .unwrap();
+        let ids: Vec<&str> = doc.hosts.iter().map(|h| h.id.as_str()).collect();
+        assert_eq!(ids, ["10.0.0.2", "10.0.0.3"]);
+        assert_eq!(doc.hosts[0].display_label(), "first");
     }
 
     #[test]
@@ -465,6 +486,7 @@ mod tests {
             r#"{"id": "a", "position": [1, "x", 3]}"#,
             r#"{"id": "a", "position": "1,2,3"}"#,
             r#"{"id": "a", "position": {"x": 1}}"#,
+            r#"{"id": "a", "position": [1e39, 0, 0]}"#,
         ] {
             assert_eq!(host(bad).position, None, "{bad}");
         }

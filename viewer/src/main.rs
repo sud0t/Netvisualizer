@@ -53,7 +53,7 @@ use crate::graph::{Graph, GraphPlugin, MapDocument};
 use crate::map::{CONTRACT_VERSION, MapDoc};
 use crate::panel::{Panel, PanelPlugin};
 use crate::picking::{Picker, PickingPlugin, SelectHost};
-use crate::scan::{ScanPlan, ScanPlugin, ScanSettings, StartScan};
+use crate::scan::{ScanJob, ScanPlan, ScanPlugin, ScanSettings, StartScan};
 use crate::scene::{ResetView, ScenePlugin};
 use crate::ui::{Help, Status, UiInput, UiPlugin};
 
@@ -98,18 +98,25 @@ struct Args {
     #[arg(long, requires = "scan", help_heading = "Scanning")]
     no_names: bool,
 
+    /// Find hosts with ping only, even when ARP requests could be sent
+    /// (with root or CAP_NET_RAW, the subnet is swept with ARP, which
+    /// finds hosts that ignore ping).
+    #[arg(long, requires = "scan", help_heading = "Scanning")]
+    no_arp: bool,
+
     /// Seconds to wait for each ping or connection.
     #[arg(long, value_name = "SECONDS", default_value_t = 1.0, value_parser = parse_seconds, help_heading = "Scanning")]
     timeout: f64,
 
-    /// Pings or connections in flight at once.
+    /// Pings or connections in flight at once (1 to 65535).
     #[arg(
         long,
         value_name = "N",
         default_value_t = 254,
+        value_parser = clap::value_parser!(u16).range(1..),
         help_heading = "Scanning"
     )]
-    concurrency: usize,
+    concurrency: u16,
 
     /// Show this machine's networks and exit.
     #[arg(long, exclusive = true, help_heading = "Scanning")]
@@ -166,8 +173,9 @@ impl Args {
             interface: self.interface.clone(),
             ports,
             names: !self.no_names,
+            arp: !self.no_arp,
             timeout: Duration::from_secs_f64(self.timeout),
-            concurrency: self.concurrency,
+            concurrency: usize::from(self.concurrency),
             save: self.save.clone(),
         })
     }
@@ -290,11 +298,21 @@ fn main() -> ExitCode {
         status = Status::message("starting the scan…");
     }
 
-    // Take the screenshot early enough that the GPU readback finishes before we quit.
+    // Take the screenshot early enough that the GPU readback finishes before
+    // we quit: 30 frames before the end, but never before frame 30 (the
+    // first frames are still black), and a run too short for that is
+    // stretched rather than left without its picture.
     let screenshot_frame = args
         .exit_after_frames
         .map_or(30, |n| n.saturating_sub(30))
-        .max(2);
+        .max(30);
+    let exit_after = args.exit_after_frames.map(|n| {
+        if args.screenshot.is_some() {
+            n.max(screenshot_frame + 30)
+        } else {
+            n
+        }
+    });
 
     let mut app = App::new();
     app.add_plugins(
@@ -340,7 +358,7 @@ fn main() -> ExitCode {
     })
     .insert_resource(SmokeTest {
         frames: 0,
-        exit_after: args.exit_after_frames,
+        exit_after,
         screenshot: args.screenshot,
         screenshot_frame,
     })
@@ -493,22 +511,30 @@ fn shortcuts(
     }
 }
 
-/// Apply `--select` / `--fly` the first time a map is drawn.
+/// Apply `--select` / `--fly` as soon as a drawn map has the host. With
+/// `--scan` the first map holds only the scanner, so the host may take a
+/// few stages to appear; it is only missing for good once the scan is over.
 fn debug_select(
     graph: Res<Graph>,
+    job: Option<Res<ScanJob>>,
     mut debug: ResMut<DebugSelect>,
     mut select: MessageWriter<SelectHost>,
 ) {
-    if !graph.is_changed() || !graph.drawn || debug.id.is_none() {
+    if !graph.is_changed() || !graph.drawn {
         return;
     }
-    let id = debug.id.take().unwrap_or_default();
-    if !graph.nodes.contains_key(&id) {
-        warn!("--select {id}: no such host in the map");
+    let Some(id) = debug.id.as_deref() else {
+        return;
+    };
+    if !graph.nodes.contains_key(id) {
+        if job.is_none() {
+            warn!("--select {id}: no such host in the map");
+            debug.id = None;
+        }
         return;
     }
     select.write(SelectHost {
-        id: Some(id),
+        id: debug.id.take(),
         fly: debug.fly,
     });
 }
@@ -745,6 +771,8 @@ mod tests {
             &["--no-names"],
             &["-i", "wlan0"],
             &["--save", "x.json"],
+            &["--scan", "--concurrency", "0"],
+            &["--scan", "--concurrency", "70000"],
             &["--no-window"],
             &["--scan", "--json", "x.json"],
             &["--list-interfaces", "--scan"],

@@ -16,13 +16,12 @@ You are going to be handling the graphics side of this project (Rust), do not to
 ## TODO, in order
 New features come after migration steps; every step leaves the program working. Requests under "Feature requests" get planned into this list, and each is deleted from there once it is done.
 
-1. **Milestone 7: ARP sweep.** ARP requests built by hand on a raw `AF_PACKET` socket: finds hosts that ignore ping, with their MACs (today only hosts the ping sweep found get one, from the kernel's table). Needs root or `setcap cap_net_raw+ep`; without either, the ICMP sweep runs as before.
-2. **Milestone 8: traceroute.** TTL-limited probes, so the map shows real paths with routers as nodes instead of the "behind the gateway" guess; the two-level ring layout becomes a full tree.
-3. **Milestone 9: UDP ports.** A closed UDP port answers with ICMP "port unreachable" (a connected UDP socket reports "connection refused"); silence means open or filtered.
-4. **Milestone 10: scanning from the UI.** A Scan button that sends `StartScan` as `--scan` does, the scan options, progress and cancel; after 7–9 so the options panel is built once.
-5. **Milestone 11: SSH/Telnet console.** For hosts with port 22 or 23 open, a console opened from the details card: asyncssh (and a telnet client) through the bridge, a terminal pane in egui.
+1. **Milestone 8: traceroute.** TTL-limited probes, so the map shows real paths with routers as nodes instead of the "behind the gateway" guess; the two-level ring layout becomes a full tree.
+2. **Milestone 9: UDP ports.** A closed UDP port answers with ICMP "port unreachable" (a connected UDP socket reports "connection refused"); silence means open or filtered.
+3. **Milestone 10: scanning from the UI.** A Scan button that sends `StartScan` as `--scan` does, the scan options, progress and cancel; after 8–9 so the options panel is built once.
+4. **Milestone 11: SSH/Telnet console.** For hosts with port 22 or 23 open, a console opened from the details card: asyncssh (and a telnet client) through the bridge, a terminal pane in egui.
 
-Done: Milestones 1–4 (the viewer) and 5 (the networking backend in Rust), 2026-10-21; 6 (MACs from the kernel's ARP table, vendor names through pandas, vendor labels), 2026-10-22.
+Done: Milestones 1–4 (the viewer) and 5 (the networking backend in Rust), 2026-10-21; 6 (MACs from the kernel's ARP table, vendor names through pandas, vendor labels) and 7 (the ARP sweep on a packet socket, ping for what it cannot reach), 2026-10-22.
 
 ## Architecture
 ```
@@ -32,6 +31,7 @@ scanner/          netvisualizer-scanner: finds hosts; no Bevy, no Python
   local.rs        interfaces, subnets, gateways (getifaddrs, /proc/net/route)
   icmp.rs         ICMP echo packets, built and read by hand
   sweep.rs        the ping sweep
+  arp.rs          the ARP sweep: requests built by hand on a packet socket
   neighbours.rs   the kernel's ARP table: MACs of the hosts found
   names.rs        reverse DNS
   ports.rs        TCP connect scan, service names, port lists
@@ -73,13 +73,15 @@ Every field but `ip` has a `#[serde(default)]`, so a map saved before a field ex
 ```
 - A host entry is the `Host` serialised field by field, plus `id`, `label` (hostname; else "Vendor (ip)", so two of a kind stay apart; else ip), `role` (scanner / gateway / host) and `position`. A new `Host` field shows up in the details card with no viewer change; the sidebar filter matches label, ip, hostname, mac, vendor, role and ports.
 - `extra.mac_note` marks a MAC with no vendor whose locally administered bit (0x02 of the first octet) is set: made up on the device, as phones do for privacy. The IEEE's CID blocks set that bit too, hence the lookup first.
+- `scan.type` is `arp_sweep`, `ping_sweep` or `arp_ping_sweep` (see Scanning), `demo` in the fixture.
 - Links follow the packets as far as a sweep can tell: `"subnet"` from the scanner to each host on its own subnet, `"route"` from the gateway to each host outside it (from the scanner when the map has no gateway). The layout follows the links: the scanner at the origin, its hosts on rings around it (gateway first, then by address), hosts behind the gateway on rings of their own beyond it.
 - `extra.status == "down"` draws a host grey; the scan uses it for a gateway that was swept and did not answer.
 
 ## Scanning
 - Nothing touches the network until a `StartScan` message arrives: `--scan [CIDR]` sends one at start-up, and the Milestone 10 button will send the same. One scan at a time, with the settings in the `ScanSettings` resource.
-- The stages run on a thread with its own tokio runtime and hand the viewer a new map after each: sweep → keep the gateway → mark local hosts → MACs → vendors → reverse DNS (the scanner's own name from `gethostname`) → TCP ports if asked → done (and `--save`). Bevy systems only read what has arrived over the channel.
-- MACs come from `/proc/net/arp` (rows with flags 0x2, complete), which the sweep itself filled: to ping an address on our link the kernel first ARPs for it. No root; Linux only. The scanner's own is `/sys/class/net/<iface>/address`. Hosts behind the gateway have none (the kernel ARPs for the gateway instead), and hosts that answer ARP but not ping are not found: Milestone 7.
+- The stages run on a thread with its own tokio runtime and hand the viewer a new map after each: sweep → keep the scanner and the gateway → mark local hosts → MACs → vendors → reverse DNS (the scanner's own name from `gethostname`) → TCP ports if asked → done (and `--save`). Bevy systems only read what has arrived over the channel.
+- The sweep is ARP for the part of the network on our own link, and ping for the whole network when it reaches beyond the link (ARP is not routed, but every host on the link must answer it, ping or no ping; the hosts ARP found keep their entries). `scan.type` says which ran: `arp_sweep`, `ping_sweep`, or `arp_ping_sweep` for both. The ARP sweep needs a packet socket (`AF_PACKET`/`SOCK_RAW`, bound to the interface and EtherType 0x0806), so root or `CAP_NET_RAW` (`sudo setcap cap_net_raw+ep target/release/netvisualizer`, again after each build); without it, with `--no-arp`, or when the ARP sweep fails midway, ping covers everything. It asks every address but ours, asks the silent ones once more, and listens `timeout` after the last request; any ARP frame from an address in the network, reply or overheard request, counts. The sweep never finds the scanner itself, so the scan adds it. Without root it can still be tried in a user namespace: `scripts/arp-sandbox.sh`.
+- MACs come with the ARP replies; for pinged hosts, from `/proc/net/arp` (rows with flags 0x2, complete), which the pings filled: to ping an address on our link the kernel first ARPs for it. No root; Linux only. The scanner's own is `/sys/class/net/<iface>/address`. Hosts behind the gateway have none (the kernel ARPs for the gateway instead).
 - The vendor stage runs in Python (`viewer/src/vendors.rs` → `netvisualizer/vendors.py`), blocking the scan thread between the Rust stages; without pandas it skips itself with a note.
 - The sweep needs no root: an ICMP datagram socket (allowed when the process's group is in `net.ipv4.ping_group_range`), else a raw socket (root or `CAP_NET_RAW`), else the system `ping` per address. It asks for a 4 MiB send buffer, because probes waiting for ARP hold buffer space for up to ~3 s and the default 208 KiB stalls a /24; replies already received are read before any probe is timed out.
 

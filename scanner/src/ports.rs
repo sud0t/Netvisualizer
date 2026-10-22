@@ -178,20 +178,28 @@ mod tests {
 
     use super::*;
 
-    /// A port nobody listens on: bind one, note it, let it go.
-    fn closed_port() -> u16 {
-        TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port()
+    /// A port nobody listens on: a socket bound to it but not listening
+    /// refuses connections, and holding it keeps another test from taking
+    /// the port meanwhile.
+    fn closed_port() -> (socket2::Socket, u16) {
+        let socket = socket2::Socket::new(
+            socket2::Domain::IPV4,
+            socket2::Type::STREAM,
+            Some(socket2::Protocol::TCP),
+        )
+        .unwrap();
+        socket
+            .bind(&SocketAddr::from((Ipv4Addr::LOCALHOST, 0)).into())
+            .unwrap();
+        let port = socket.local_addr().unwrap().as_socket().unwrap().port();
+        (socket, port)
     }
 
     #[tokio::test]
     async fn open_ports_are_found_and_closed_ones_are_not() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let open = listener.local_addr().unwrap().port();
-        let closed = closed_port();
+        let (_held, closed) = closed_port();
 
         let mut hosts = vec![Host::new(Ipv4Addr::LOCALHOST)];
         hosts[0].open_ports.push(Port {
@@ -231,7 +239,8 @@ mod tests {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let timeout = Duration::from_millis(500);
         assert!(tcp_connect(listener.local_addr().unwrap(), timeout).await);
-        let refused = SocketAddr::from((Ipv4Addr::LOCALHOST, closed_port()));
+        let (_held, closed) = closed_port();
+        let refused = SocketAddr::from((Ipv4Addr::LOCALHOST, closed));
         assert!(!tcp_connect(refused, timeout).await);
     }
 

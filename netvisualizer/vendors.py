@@ -42,7 +42,9 @@ def vendors_by_prefix() -> pd.Series:
     table = pd.read_csv(
         CSV, usecols=["Mac Prefix", "Vendor Name"], dtype=str, keep_default_na=False
     )
-    table = table[table["Vendor Name"] != ""]
+    # A prefix listed twice (not in this export, but a lookup by index needs
+    # it unique) keeps its first row.
+    table = table[table["Vendor Name"] != ""].drop_duplicates(subset="Mac Prefix")
     return pd.Series(table["Vendor Name"].to_numpy(), index=table["Mac Prefix"].str.upper())
 
 

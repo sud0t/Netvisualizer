@@ -5,11 +5,16 @@
 //! and after each one the viewer gets a new map, so it redraws as the scan
 //! goes:
 //!
-//! 1. the sweep: an ICMP echo request to every address (`scanner::sweep`);
+//! 1. the sweep: an ARP request to every address on our own link when a
+//!    packet socket may be opened (`scanner::arp`); an ICMP echo request to
+//!    every address of the network when the ARP sweep could not run or the
+//!    network reaches beyond the link (`scanner::sweep`), the hosts ARP
+//!    found keeping their entries;
 //! 2. the gateway is kept even if it ignored the ping, and every host is
 //!    marked as on our own subnet or not;
-//! 3. MACs from the kernel's ARP table, which the sweep just filled
-//!    (`scanner::neighbours`), then their vendors through Python (vendors.rs);
+//! 3. MACs the ARP sweep did not bring, from the kernel's ARP table, which
+//!    the ping sweep filled (`scanner::neighbours`); then their vendors
+//!    through Python (vendors.rs);
 //! 4. names, unless turned off: reverse DNS (`scanner::names`);
 //! 5. ports, when asked for: the TCP connect scan (`scanner::ports`).
 //!
@@ -18,16 +23,18 @@
 //! channel; Bevy systems only ever read what has already arrived.
 //! `--no-window` runs the same thread and prints the reports instead.
 
+use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Mutex;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 use scanner::Ipv4Net;
+use scanner::arp::PacketSocket;
 use scanner::local::{self, LocalNetwork, LocalNetworkError};
 use scanner::names;
 use scanner::neighbours;
@@ -58,7 +65,11 @@ pub struct ScanSettings {
     pub ports: Vec<u16>,
     /// Look the hosts' names up with reverse DNS.
     pub names: bool,
-    /// How long each ping or connection may take.
+    /// Sweep the part of the network on our own link with ARP when a packet
+    /// socket can be opened (root or `CAP_NET_RAW`); off means ping only.
+    pub arp: bool,
+    /// How long each ping or connection may take, and how long the ARP
+    /// sweep listens after its last request.
     pub timeout: Duration,
     /// How many pings or connections are in flight at once.
     pub concurrency: usize,
@@ -73,6 +84,7 @@ impl Default for ScanSettings {
             interface: None,
             ports: Vec::new(),
             names: true,
+            arp: true,
             timeout: Duration::from_secs(1),
             concurrency: 254,
             save: None,
@@ -100,6 +112,20 @@ impl ScanPlan {
             settings: settings.clone(),
             local,
         })
+    }
+
+    /// The part of the swept network that is on our own link, where ARP
+    /// reaches: all of it when it lies inside our subnet, our subnet when it
+    /// is the bigger one, nothing when they do not overlap.
+    pub fn link_network(&self) -> Option<Ipv4Net> {
+        let (swept, link) = (self.network, self.local.network);
+        if link.contains(&swept) {
+            Some(swept)
+        } else if swept.contains(&link) {
+            Some(link)
+        } else {
+            None
+        }
     }
 
     /// "sweeping 192.168.1.0/24 from 192.168.1.143 on wlan0 (gateway 192.168.1.254)"
@@ -161,33 +187,93 @@ pub fn spawn(plan: ScanPlan) -> Receiver<ScanEvent> {
 async fn run(plan: &ScanPlan, tx: &Sender<ScanEvent>) -> Result<(), String> {
     let settings = &plan.settings;
     let mut report = Reporter::new(plan, tx);
+
+    // ARP for the part of the network on our own link, when it is allowed
+    // and possible; ping for the rest, or for everything otherwise.
+    let arp = match plan.link_network().filter(|_| settings.arp) {
+        Some(link) => match PacketSocket::open(&plan.local) {
+            Ok(socket) => Some((link, socket)),
+            Err(err) => {
+                report.note(format!("ARP sweep skipped: {err}"));
+                None
+            }
+        },
+        None => None,
+    };
+    let mut ping = match &arp {
+        Some((link, _)) if *link == plan.network => None,
+        _ => Some(plan.network),
+    };
+    report.kind = match (&arp, &ping) {
+        (Some(_), None) => "arp_sweep",
+        (Some(_), Some(_)) => "arp_ping_sweep",
+        (None, _) => "ping_sweep",
+    };
     report.map(&[], &format!("sweeping {}…", plan.network));
 
-    let options = SweepOptions {
-        timeout: settings.timeout,
-        concurrency: settings.concurrency,
-    };
-    let sweep = sweep::ping_sweep(&plan.network, &options, progress(tx))
-        .await
-        .map_err(|err| format!("the sweep failed: {err}"))?;
-    for note in &sweep.notes {
-        report.note(note.clone());
+    let mut hosts = Vec::new();
+    if let Some((link, socket)) = &arp {
+        match socket.sweep(link, settings.timeout, progress(tx)).await {
+            Ok(sweep) => {
+                report.note(format!(
+                    "{link}: {} of {} addresses answered ARP",
+                    sweep.hosts.len(),
+                    sweep.probed
+                ));
+                hosts = sweep.hosts;
+            }
+            // The interface went bad under us (a queue that never drains,
+            // the link gone): the ping sweep may still get through.
+            Err(err) => {
+                report.note(format!("the ARP sweep failed ({err}); pinging instead"));
+                report.kind = "ping_sweep";
+                ping = Some(plan.network);
+            }
+        }
     }
-    report.note(format!(
-        "{}: {} of {} addresses answered ({})",
-        plan.network,
-        sweep.hosts.len(),
-        sweep.probed,
-        sweep.method.describe()
-    ));
-    let mut hosts = sweep.hosts;
-    keep_gateway(&mut hosts, plan.local.gateway, &plan.network);
+    if let Some(network) = ping {
+        let options = SweepOptions {
+            timeout: settings.timeout,
+            concurrency: settings.concurrency,
+        };
+        let sweep = sweep::ping_sweep(&network, &options, progress(tx))
+            .await
+            .map_err(|err| format!("the sweep failed: {err}"))?;
+        for note in &sweep.notes {
+            report.note(note.clone());
+        }
+        report.note(format!(
+            "{network}: {} of {} addresses answered ({})",
+            sweep.hosts.len(),
+            sweep.probed,
+            sweep.method.describe()
+        ));
+        // A host both sweeps found keeps its ARP entry, which has the MAC.
+        let known: HashSet<IpAddr> = hosts.iter().map(|h| h.ip).collect();
+        hosts.extend(sweep.hosts.into_iter().filter(|h| !known.contains(&h.ip)));
+        hosts.sort_by_key(|h| h.ip);
+    }
+    // The ARP sweep never finds this machine (nobody answers their own
+    // request), nor does a ping sweep of some other network: put it first,
+    // so the later stages fill it in like any other host.
+    let me = IpAddr::V4(plan.local.ip);
+    if !hosts.iter().any(|h| h.ip == me) {
+        hosts.insert(0, scanner::Host::new(me));
+    }
+    let probe = match report.kind {
+        "arp_sweep" => "ARP",
+        "ping_sweep" => "ping",
+        _ => "ARP or ping",
+    };
+    keep_gateway(&mut hosts, plan.local.gateway, &plan.network, probe);
     local::mark_local(&mut hosts, &plan.local.network);
 
-    // The sweep made the kernel ARP for every address on our link that
-    // answered, so their MACs are in its table now; a loopback or remote-only
-    // scan has none, and then there is nothing to look up either.
-    let with_mac = neighbours::attach_macs(&mut hosts, &neighbours::known_macs(&plan.local));
+    // The ARP sweep's hosts carry their MACs; for the ping sweep's, the pings
+    // made the kernel ARP for every address on our link that answered, so
+    // its table has them now. A loopback or remote-only scan has none, and
+    // then there is nothing to look up either.
+    neighbours::attach_macs(&mut hosts, &neighbours::known_macs(&plan.local));
+    let with_mac = hosts.iter().filter(|h| h.mac.is_some()).count();
     if with_mac > 0 {
         report.map(&hosts, "looking up vendors…");
         match vendors::look_up(&mut hosts) {
@@ -201,7 +287,13 @@ async fn run(plan: &ScanPlan, tx: &Sender<ScanEvent>) -> Result<(), String> {
 
     if settings.names {
         report.map(&hosts, "resolving names…");
-        names::resolve_hostnames(&mut hosts, names::DEFAULT_CONCURRENCY, false).await;
+        names::resolve_hostnames(
+            &mut hosts,
+            names::DEFAULT_CONCURRENCY,
+            names::DEFAULT_TIMEOUT,
+            false,
+        )
+        .await;
         // Reverse DNS rarely knows the machine asking.
         let me = IpAddr::V4(plan.local.ip);
         if let Some(host) = hosts.iter_mut().find(|h| h.ip == me)
@@ -242,10 +334,16 @@ async fn run(plan: &ScanPlan, tx: &Sender<ScanEvent>) -> Result<(), String> {
 }
 
 /// Keep the gateway on the map even when the sweep did not find it. Inside
-/// the swept network that means it ignored the ping (many routers do), and
-/// it is drawn greyed out. Outside it, it was never pinged, but the swept
-/// hosts are reached through it, so it is drawn like any other host.
-fn keep_gateway(hosts: &mut Vec<scanner::Host>, gateway: Option<Ipv4Addr>, swept: &Ipv4Net) {
+/// the swept network that means it ignored the `probe` ("ping", which many
+/// routers drop), and it is drawn greyed out. Outside it, it was never
+/// probed, but the swept hosts are reached through it, so it is drawn like
+/// any other host.
+fn keep_gateway(
+    hosts: &mut Vec<scanner::Host>,
+    gateway: Option<Ipv4Addr>,
+    swept: &Ipv4Net,
+    probe: &str,
+) {
     let Some(gateway) = gateway else {
         return;
     };
@@ -256,7 +354,7 @@ fn keep_gateway(hosts: &mut Vec<scanner::Host>, gateway: Option<Ipv4Addr>, swept
     if swept.contains(&gateway) {
         host.extra.insert("status".into(), "down".into());
         host.extra
-            .insert("note".into(), "did not answer ping".into());
+            .insert("note".into(), format!("did not answer {probe}").into());
     } else {
         host.extra.insert(
             "note".into(),
@@ -271,6 +369,8 @@ struct Reporter<'a> {
     plan: &'a ScanPlan,
     tx: &'a Sender<ScanEvent>,
     revision: u64,
+    /// The maps' `scan.type`: which sweep finds the hosts.
+    kind: &'static str,
 }
 
 impl<'a> Reporter<'a> {
@@ -279,6 +379,7 @@ impl<'a> Reporter<'a> {
             plan,
             tx,
             revision: 0,
+            kind: "ping_sweep",
         }
     }
 
@@ -286,7 +387,7 @@ impl<'a> Reporter<'a> {
     fn map(&mut self, hosts: &[scanner::Host], stage: &str) -> MapDoc {
         self.revision += 1;
         let scan = Scan {
-            kind: Some("ping_sweep".to_string()),
+            kind: Some(self.kind.to_string()),
             network: Some(self.plan.network.to_string()),
             stage: Some(stage.to_string()),
             ..Scan::default()
@@ -390,23 +491,33 @@ fn receive(
     let Ok(events) = job.0.lock() else {
         return;
     };
-    for event in events.try_iter() {
-        match event {
-            ScanEvent::Map(map) => {
+    loop {
+        match events.try_recv() {
+            Ok(ScanEvent::Map(map)) => {
                 if let Some(stage) = &map.scan.stage {
                     info!("{stage}");
                 }
                 status.show_map(map.summary());
                 doc.0 = Some(*map);
             }
-            ScanEvent::Progress { .. } => {} // the HUD shows no progress yet (Milestone 10)
-            ScanEvent::Note(note) => info!("{note}"),
-            ScanEvent::Finished(result) => {
+            Ok(ScanEvent::Progress { .. }) => {} // the HUD shows no progress yet (Milestone 10)
+            Ok(ScanEvent::Note(note)) => info!("{note}"),
+            Ok(ScanEvent::Finished(result)) => {
                 if let Err(err) = result {
                     error!("scan failed: {err}");
                     status.show_error(format!("scan failed: {err}"));
                 }
                 commands.remove_resource::<ScanJob>();
+                return; // the last event: the thread is gone or going
+            }
+            Err(TryRecvError::Empty) => return,
+            // The thread died without a last word (a panic, which the log
+            // shows): the job would otherwise be "running" for ever.
+            Err(TryRecvError::Disconnected) => {
+                error!("the scan stopped without finishing");
+                status.show_error("the scan stopped without finishing".to_string());
+                commands.remove_resource::<ScanJob>();
+                return;
             }
         }
     }
@@ -423,6 +534,7 @@ pub fn run_headless(plan: ScanPlan) -> ExitCode {
     let mut stage = String::new();
     let mut last_progress = Instant::now();
     let mut last_map = None;
+    let mut finished = false;
     for event in spawn(plan) {
         match event {
             ScanEvent::Map(map) => {
@@ -446,8 +558,13 @@ pub fn run_headless(plan: ScanPlan) -> ExitCode {
                 eprintln!("netvisualizer: {err}");
                 return ExitCode::FAILURE;
             }
-            ScanEvent::Finished(Ok(())) => {}
+            ScanEvent::Finished(Ok(())) => finished = true,
         }
+    }
+    if !finished {
+        // The thread died without a last word: a panic, printed above.
+        eprintln!("netvisualizer: the scan stopped without finishing");
+        return ExitCode::FAILURE;
     }
     if let Some(map) = last_map {
         println!();
@@ -578,6 +695,11 @@ mod tests {
         let done = maps[3];
         let ids: Vec<&str> = done.hosts.iter().map(|h| h.id.as_str()).collect();
         assert_eq!(ids, ["127.0.0.1", "127.0.0.2"]);
+        assert_eq!(
+            done.scan.kind.as_deref(),
+            Some("ping_sweep"),
+            "loopback has no MAC to send ARP from"
+        );
         let scanner = &done.hosts[0];
         assert_eq!(scanner.role(), crate::map::Role::Scanner);
         assert!(scanner.fields["hostname"].is_string(), "named: {scanner:?}");
@@ -601,17 +723,24 @@ mod tests {
         assert!(
             notes
                 .iter()
+                .any(|n| n.starts_with("ARP sweep skipped: interface \"lo\" has no MAC")),
+            "{notes:?}"
+        );
+        assert!(
+            notes
+                .iter()
                 .any(|n| n.starts_with("2 open ports") || n.starts_with("1 open ports")),
             "{notes:?}"
         );
     }
 
     /// A scan "from" 192.0.2.10 on 192.0.2.0/24, a network reserved for
-    /// documentation where nothing ever answers.
+    /// documentation where nothing ever answers; ping only.
     fn documentation_plan(network: &str) -> ScanPlan {
         let settings = ScanSettings {
             network: Some(network.parse().unwrap()),
             names: false,
+            arp: false,
             timeout: Duration::from_millis(300),
             ..ScanSettings::default()
         };
@@ -644,6 +773,13 @@ mod tests {
             .filter_map(|m| m.scan.stage.clone())
             .collect();
         assert_eq!(stages, ["sweeping 192.0.2.0/30…", "done"]);
+
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, ScanEvent::Note(n) if n.starts_with("ARP sweep"))),
+            "ARP was turned off: {events:?}"
+        );
 
         let saved = MapDoc::load(&path).unwrap();
         let _ = std::fs::remove_file(&path);
@@ -687,6 +823,19 @@ mod tests {
             "never pinged, so not down"
         );
         assert_eq!(gateway.fields["is_local"], true);
+    }
+
+    #[test]
+    fn arp_covers_the_part_of_the_network_on_our_link() {
+        let link = |network: &str| documentation_plan(network).link_network();
+        assert_eq!(link("192.0.2.0/30"), Some("192.0.2.0/30".parse().unwrap()));
+        assert_eq!(link("192.0.2.0/24"), Some("192.0.2.0/24".parse().unwrap()));
+        assert_eq!(
+            link("192.0.0.0/16"),
+            Some("192.0.2.0/24".parse().unwrap()),
+            "the rest is pinged"
+        );
+        assert_eq!(link("10.0.0.0/24"), None);
     }
 
     #[test]
@@ -777,6 +926,25 @@ mod tests {
         let status = app.world().resource::<Status>();
         assert!(status.error);
         assert_eq!(status.text, "scan failed: the sweep failed: boom");
+        assert!(!app.world().contains_resource::<ScanJob>());
+    }
+
+    /// The scan thread died without sending `Finished` (a panic): the job
+    /// must not stay "running" for ever.
+    #[test]
+    fn a_scan_thread_that_dies_ends_the_job_with_an_error() {
+        let mut app = app();
+        let (tx, rx) = mpsc::channel();
+        app.insert_resource(ScanJob::new(rx));
+        tx.send(ScanEvent::Note("sweeping".into())).unwrap();
+        app.update();
+        assert!(app.world().contains_resource::<ScanJob>(), "still running");
+
+        drop(tx);
+        app.update();
+        let status = app.world().resource::<Status>();
+        assert!(status.error);
+        assert_eq!(status.text, "the scan stopped without finishing");
         assert!(!app.world().contains_resource::<ScanJob>());
     }
 

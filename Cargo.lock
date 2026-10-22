@@ -4071,6 +4071,7 @@ dependencies = [
  "dns-lookup",
  "if-addrs",
  "ipnet",
+ "libc",
  "serde",
  "serde_json",
  "socket2",

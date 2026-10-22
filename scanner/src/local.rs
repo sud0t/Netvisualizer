@@ -132,10 +132,13 @@ pub fn default_network(interface: Option<&str>) -> Result<LocalNetwork, LocalNet
 /// "Connecting" a UDP socket sends nothing: it only makes the kernel choose
 /// the route, and so the source address, it would use for that destination.
 /// `local_addr()` then tells us which address that is. The destination does
-/// not even have to exist.
+/// not even have to exist: 192.0.2.1 is reserved for documentation and
+/// belongs to no network, so only the default route can match it (a route
+/// to a private network, a VPN's 10.0.0.0/8 say, would catch a private
+/// address instead and name the wrong interface).
 pub fn outbound_ip() -> Option<Ipv4Addr> {
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
-    socket.connect((Ipv4Addr::new(10, 254, 254, 254), 1)).ok()?;
+    socket.connect((Ipv4Addr::new(192, 0, 2, 1), 1)).ok()?;
     match socket.local_addr().ok()?.ip() {
         IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
         _ => None,

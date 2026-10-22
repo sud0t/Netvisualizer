@@ -10,8 +10,6 @@
 //! `Panel`, so egui counts the pointer as over the UI there and clicks never
 //! fall through to the 3D view.
 
-use std::cmp::Ordering;
-
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use serde_json::Value;
@@ -61,7 +59,7 @@ pub fn humanize(key: &str) -> String {
 }
 
 /// One row of the host list: what the list and the filter need, sorted once
-/// per map by [`compare_rows`], so the per-frame draw does no work but filtering.
+/// per map by [`sort_key`], so the per-frame draw does no work but filtering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {
     pub id: String,
@@ -116,7 +114,7 @@ impl Panel {
                 search: search_text(host),
             })
             .collect();
-        rows.sort_by(compare_rows);
+        rows.sort_by_cached_key(sort_key);
         self.rows = rows;
     }
 
@@ -125,12 +123,21 @@ impl Panel {
         self.filter.trim().to_lowercase()
     }
 
-    /// Every row, or those matching the query.
-    pub fn visible(&self) -> Vec<&Row> {
+    /// The indices of every row, or of those matching the query. The draw
+    /// computes this once per frame and hands it around.
+    pub fn visible_indices(&self) -> Vec<usize> {
         let query = self.query();
-        self.rows
-            .iter()
-            .filter(|row| query.is_empty() || row.search.contains(&query))
+        (0..self.rows.len())
+            .filter(|&i| query.is_empty() || self.rows[i].search.contains(&query))
+            .collect()
+    }
+
+    /// Every row, or those matching the query.
+    #[cfg(test)]
+    pub fn visible(&self) -> Vec<&Row> {
+        self.visible_indices()
+            .into_iter()
+            .map(|i| &self.rows[i])
             .collect()
     }
 
@@ -181,25 +188,22 @@ pub fn address_key(id: &str) -> String {
     }
 }
 
-/// Sort position of a role: scanner, gateway, host, then roles this viewer
-/// does not know.
+/// Sort position of a role: scanner, gateway, host (which a host without
+/// a role is drawn as), then roles this viewer does not know.
 fn role_order(raw_role: &str) -> u8 {
     match raw_role {
         "scanner" => 0,
         "gateway" => 1,
-        "host" => 2,
+        "host" | "" => 2,
         _ => 9,
     }
 }
 
-/// By role, then by address. Names compare without case first, with the
-/// exact text as the tie-break.
-pub fn compare_rows(a: &Row, b: &Row) -> Ordering {
-    let (ka, kb) = (address_key(&a.id), address_key(&b.id));
-    role_order(&a.raw_role)
-        .cmp(&role_order(&b.raw_role))
-        .then_with(|| ka.to_lowercase().cmp(&kb.to_lowercase()))
-        .then_with(|| ka.cmp(&kb))
+/// What rows sort by: role, then address. Names compare without case
+/// first, with the exact text as the tie-break. Computed once per row.
+pub fn sort_key(row: &Row) -> (u8, String, String) {
+    let key = address_key(&row.id);
+    (role_order(&row.raw_role), key.to_lowercase(), key)
 }
 
 /// What the filter matches: label, id, hostname, MAC, vendor, role and
@@ -322,7 +326,11 @@ pub fn draw_sidebar(
                 let height = (screen.height() - 2.0 * (SIDEBAR_MARGIN + SIDEBAR_PADDING)).max(0.0);
                 ui.set_width(width);
                 ui.set_height(height);
-                draw_head(ui, panel, &mut select);
+                // The filter's matches, once per frame: a character typed
+                // this frame shows in the box at once and in the list and
+                // count next frame, 16 ms later.
+                let visible = panel.visible_indices();
+                draw_head(ui, panel, &visible, &mut select);
                 if let Some(host) = host {
                     let max_height = (height * DETAILS_MAX_FRACTION)
                         .min(ui.available_height() - GAP - MIN_LIST_HEIGHT);
@@ -331,6 +339,7 @@ pub fn draw_sidebar(
                 draw_list(
                     ui,
                     panel,
+                    &visible,
                     selected.as_deref(),
                     selection_changed,
                     &mut select,
@@ -361,18 +370,23 @@ fn toggle_button(ui: &mut egui::Ui, collapsed: bool) -> egui::Response {
 
 /// The sidebar's head: filter box, count, toggle. Enter in the box selects and
 /// flies to the first match; Escape leaves the box (egui does that itself).
-fn draw_head(ui: &mut egui::Ui, panel: &mut Panel, select: &mut MessageWriter<SelectHost>) {
+fn draw_head(
+    ui: &mut egui::Ui,
+    panel: &mut Panel,
+    visible: &[usize],
+    select: &mut MessageWriter<SelectHost>,
+) {
     let total = panel.rows.len();
     let count = if panel.query().is_empty() {
         total.to_string()
     } else {
-        format!("{} / {total}", panel.visible().len())
+        format!("{} / {total}", visible.len())
     };
     // A row of its own: right-to-left so the box takes what the count and the
     // toggle leave, centred within the row's height.
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            draw_head_row(ui, panel, &count, select);
+            draw_head_row(ui, panel, visible, &count, select);
         });
     });
 }
@@ -380,6 +394,7 @@ fn draw_head(ui: &mut egui::Ui, panel: &mut Panel, select: &mut MessageWriter<Se
 fn draw_head_row(
     ui: &mut egui::Ui,
     panel: &mut Panel,
+    visible: &[usize],
     count: &str,
     select: &mut MessageWriter<SelectHost>,
 ) {
@@ -406,10 +421,10 @@ fn draw_head_row(
     }
     if response.has_focus()
         && ui.input(|i| i.key_pressed(egui::Key::Enter))
-        && let Some(first) = panel.visible().first()
+        && let Some(&first) = visible.first()
     {
         select.write(SelectHost {
-            id: Some(first.id.clone()),
+            id: Some(panel.rows[first].id.clone()),
             fly: true,
         });
     }
@@ -432,11 +447,12 @@ fn select_all(ctx: &egui::Context, id: egui::Id, text: &str) {
 fn draw_list(
     ui: &mut egui::Ui,
     panel: &Panel,
+    visible: &[usize],
     selected: Option<&str>,
     selection_changed: bool,
     select: &mut MessageWriter<SelectHost>,
 ) {
-    let rows = panel.visible();
+    let rows: Vec<&Row> = visible.iter().map(|&i| &panel.rows[i]).collect();
     egui::ScrollArea::vertical()
         .id_salt("hosts")
         .auto_shrink([false, false])
@@ -762,6 +778,7 @@ mod tests {
             host(r#"{"id": "10.0.0.1", "role": "gateway"}"#),
             host(r#"{"id": "10.0.0.50", "role": "scanner"}"#),
             host(r#"{"id": "10.0.0.100", "role": "host"}"#),
+            host(r#"{"id": "10.0.0.7"}"#), // no role: drawn as a host, sorted as one
         ]);
         let ids: Vec<&str> = panel.rows.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(
@@ -770,13 +787,14 @@ mod tests {
                 "10.0.0.50",
                 "10.0.0.1",
                 "10.0.0.3",
+                "10.0.0.7",
                 "10.0.0.20",
                 "10.0.0.100",
                 "10.0.0.2"
             ]
         );
         assert_eq!(panel.rows[2].label, "printer");
-        let unknown = &panel.rows[5];
+        let unknown = &panel.rows[6];
         assert_eq!(
             (unknown.role, unknown.raw_role.as_str()),
             (Role::Host, "printer")

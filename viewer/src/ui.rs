@@ -23,6 +23,9 @@ const LABEL_PADDING: egui::Vec2 = egui::vec2(7.0, 2.0);
 const LABEL_ROUNDING: f32 = 4.0;
 /// Labels fainter than this are not worth a draw call.
 const MIN_LABEL_OPACITY: f32 = 0.01;
+/// A label whose anchor is further than this (logical pixels) outside the
+/// viewport cannot reach into it, and is not laid out at all.
+const LABEL_CULL_MARGIN: f32 = 240.0;
 /// The HUD and the legend sit 12 px from the window edges.
 const EDGE: f32 = 12.0;
 
@@ -471,23 +474,31 @@ fn draw_labels(
     let camera_global = GlobalTransform::from(*camera_transform);
     let selected = picker.selected_entity(&graph);
 
-    let mut labels: Vec<(f32, Entity, &Node, Vec2)> = nodes
+    // Labels off the screen's edges by more than a label's width are
+    // dropped before any text is laid out.
+    let on_screen = camera
+        .logical_viewport_rect()
+        .map(|rect| rect.inflate(LABEL_CULL_MARGIN));
+    let mut labels: Vec<(f32, f32, Entity, &Node, Vec2)> = nodes
         .iter()
         .filter_map(|(entity, node, transform)| {
             let distance = camera_transform.translation.distance(transform.translation);
+            let opacity = label_opacity(distance, &settings);
+            if opacity < MIN_LABEL_OPACITY {
+                return None; // lost in the fog
+            }
             // A fixed gap above the top of the sphere.
             let anchor = transform.translation + Vec3::Y * (node.radius + LABEL_GAP);
             let screen = camera.world_to_viewport(&camera_global, anchor).ok()?; // behind the camera
-            Some((distance, entity, node, screen))
+            if on_screen.is_some_and(|rect| !rect.contains(screen)) {
+                return None;
+            }
+            Some((distance, opacity, entity, node, screen))
         })
         .collect();
     labels.sort_by(|a, b| b.0.total_cmp(&a.0));
 
-    for (distance, entity, node, screen) in labels {
-        let opacity = label_opacity(distance, &settings);
-        if opacity < MIN_LABEL_OPACITY {
-            continue;
-        }
+    for (_, opacity, entity, node, screen) in labels {
         let style = LabelStyle::new(
             node.key,
             Some(entity) == picker.hovered,
@@ -508,10 +519,13 @@ fn paint_label(
     opacity: f32,
 ) {
     let text_color = egui_color(style.text, opacity);
+    // Laid out with a placeholder colour and coloured when painted: egui
+    // caches a layout by its text and colour, and a label's colour changes
+    // every frame while it fades, which would shape its text anew each time.
     let galley = painter.layout_no_wrap(
         text.to_owned(),
         egui::FontId::monospace(MONO_PX),
-        text_color,
+        egui::Color32::PLACEHOLDER,
     );
     let size = galley.size() + 2.0 * LABEL_PADDING;
     // Whole pixels keep the 1 px border crisp.

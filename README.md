@@ -2,12 +2,13 @@
 
 Finds the hosts on your network and shows them as a 3D map in its own window.
 
-A ping sweep finds the hosts, the kernel's ARP table gives their MAC
-addresses and the IEEE's vendor list says who made them, reverse DNS names
-them, and an optional TCP connect scan lists their open ports. It is one Rust program: the scanner
-builds its own ICMP echo requests and sends them on an unprivileged ICMP
-socket (no root needed, see below), and the map is drawn with Bevy: fly
-around with the keyboard and mouse, click a host for its details.
+An ARP sweep (with the right privilege, see below) or a ping sweep finds
+the hosts, their MAC addresses and the IEEE's vendor list say who made
+them, reverse DNS names them, and an optional TCP connect scan lists their
+open ports. It is one Rust program: the scanner builds its own ARP requests
+and ICMP echo requests and sends them on raw sockets, and the map is drawn
+with Bevy: fly around with the keyboard and mouse, click a host for its
+details.
 
 ## Build (once)
 
@@ -42,6 +43,7 @@ netvisualizer --scan                            # sweep the subnet of the interf
 netvisualizer --scan 192.168.1.0/24             # this network instead
 netvisualizer --scan --ports                    # then try common TCP ports on the hosts that answered
 netvisualizer --scan --ports 22,80,8000-8010
+netvisualizer --scan --no-arp                   # ping only, even when ARP is allowed
 netvisualizer --scan --save last.json           # keep the result; --json last.json shows it again
 netvisualizer --scan --no-window                # scan and print the hosts, no window
 netvisualizer --list-interfaces                 # which networks this machine is on
@@ -55,11 +57,23 @@ scanning, show the saved fake LAN: `netvisualizer --json viewer/tests/fixtures/d
 
 ### Privileges
 
-The sweep needs no root. Linux lets a process open an ICMP "datagram" socket
-when its group is inside `net.ipv4.ping_group_range` (most distributions
-allow every group: check with `sysctl net.ipv4.ping_group_range`). Without
-that, run as root and the sweep uses a raw socket; failing both, it runs the
-system `ping` once per address.
+With root, or the `CAP_NET_RAW` capability on the binary, the sweep sends
+ARP requests to every address of the subnet. Every host on the link has to
+answer those (that is how anything reaches it at all), so an ARP sweep also
+finds the hosts that ignore ping, and the replies carry their MAC addresses.
+To grant the capability once per build:
+
+```sh
+sudo setcap cap_net_raw+ep target/release/netvisualizer
+```
+
+Without it the ping sweep runs, which needs no root: Linux lets a process
+open an ICMP "datagram" socket when its group is inside
+`net.ipv4.ping_group_range` (most distributions allow every group: check
+with `sysctl net.ipv4.ping_group_range`). Without that, run as root and the
+sweep uses a raw socket; failing both, it runs the system `ping` once per
+address. A network beyond your own subnet is always pinged: ARP does not
+cross routers.
 
 ## Controls
 

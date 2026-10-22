@@ -95,12 +95,13 @@ fn set_up(py: Python<'_>) -> PyResult<Interpreter> {
         .call_method1("insert", (0, package_root.to_string_lossy()))?;
 
     let version = py.version_info();
-    let site_packages = venv().map(|venv| {
-        venv.join("lib")
+    let site_packages = venvs().into_iter().find_map(|venv| {
+        let dir = venv
+            .join("lib")
             .join(format!("python{}.{}", version.major, version.minor))
-            .join("site-packages")
+            .join("site-packages");
+        dir.is_dir().then_some(dir)
     });
-    let site_packages = site_packages.filter(|dir| dir.is_dir());
     if let Some(dir) = &site_packages {
         // What `python` itself does for a venv: the directory, plus any
         // .pth files in it, goes on sys.path.
@@ -122,13 +123,16 @@ fn repo_root() -> PathBuf {
     viewer.parent().unwrap_or(viewer).to_path_buf()
 }
 
-/// The virtual environment to take packages from: the activated one
-/// (`VIRTUAL_ENV`), else the repo's `.venv`.
-fn venv() -> Option<PathBuf> {
-    match std::env::var_os("VIRTUAL_ENV") {
-        Some(active) => Some(PathBuf::from(active)),
-        None => Some(repo_root().join(".venv")).filter(|dir| dir.is_dir()),
-    }
+/// The virtual environments to take packages from, in order of preference:
+/// the activated one (`VIRTUAL_ENV`), then the repo's `.venv`. The first
+/// with site-packages for the embedded Python wins: an activated venv of
+/// some other project, or of another Python, has nothing for us.
+fn venvs() -> Vec<PathBuf> {
+    let active = std::env::var_os("VIRTUAL_ENV").map(PathBuf::from);
+    active
+        .into_iter()
+        .chain(std::iter::once(repo_root().join(".venv")))
+        .collect()
 }
 
 #[cfg(test)]

@@ -109,7 +109,8 @@ pub async fn ping_sweep(
         }
         None => {
             notes.push("no ICMP socket available, so one `ping` process per address".to_string());
-            let answered = sweep_with_ping_command(&addresses, options, &mut progress).await;
+            let answered =
+                sweep_with_ping_command(&addresses, options, &mut notes, &mut progress).await?;
             (answered, Method::SystemPing)
         }
     };
@@ -237,8 +238,11 @@ impl IcmpSocket {
 
     fn open_one(kind: Type) -> io::Result<UdpSocket> {
         let socket = Socket::new(Domain::IPV4, kind, Some(Protocol::ICMPV4))?;
-        // Best effort: a smaller buffer only makes sending slower.
+        // Best effort: a smaller send buffer only makes sending slower, and a
+        // smaller receive buffer only risks replies when hundreds arrive at
+        // once (the kernel drops what does not fit, without a word).
         let _ = socket.set_send_buffer_size(SEND_BUFFER_BYTES);
+        let _ = socket.set_recv_buffer_size(SEND_BUFFER_BYTES);
         socket.set_nonblocking(true)?; // tokio needs it: it waits for readiness itself
         UdpSocket::from_std(socket.into())
     }
@@ -266,7 +270,10 @@ impl IcmpSocket {
         let mut buffer = [0u8; 1500];
 
         while tally.done < total {
-            // Fill every free slot.
+            let settled_before = tally.done;
+            // Fill every free slot, reading the replies that arrive meanwhile:
+            // a send can stall for seconds while the kernel waits on ARP, and
+            // replies left unread that long could overflow the receive buffer.
             while next < total && tally.in_flight < options.concurrency.max(1) {
                 let index = next;
                 next += 1;
@@ -279,14 +286,16 @@ impl IcmpSocket {
                         tally.refused(index);
                         refused += 1;
                         first_refusal.get_or_insert(err);
-                        progress(tally.done, total);
                     }
                 }
+                self.read_waiting(&mut buffer, addresses, &token, &mut tally)?;
             }
             let Some(&(deadline, _)) = waiting.front() else {
+                if tally.done != settled_before {
+                    progress(tally.done, total);
+                }
                 continue; // nothing waiting: either all done or more to send
             };
-            let settled_before = tally.done;
 
             // Wait for a reply or for the oldest probe's time to run out.
             tokio::select! {
@@ -300,20 +309,8 @@ impl IcmpSocket {
                 () = sleep_until(deadline) => {}
             }
             // Read every reply that is already waiting before giving up on
-            // anyone: while sending stalled above, replies piled up unread.
-            loop {
-                match self.socket.try_recv_from(&mut buffer) {
-                    Ok((len, from)) => {
-                        if let Some(index) =
-                            self.match_reply(&buffer[..len], from, addresses, &token)
-                        {
-                            tally.answered(index);
-                        }
-                    }
-                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => break,
-                    Err(err) => return Err(err),
-                }
-            }
+            // anyone.
+            self.read_waiting(&mut buffer, addresses, &token, &mut tally)?;
             // Then time out every probe whose deadline has passed.
             let now = Instant::now();
             while let Some(&(deadline, index)) = waiting.front() {
@@ -338,6 +335,28 @@ impl IcmpSocket {
             .into_iter()
             .map(|p| p == Probe::Answered)
             .collect())
+    }
+
+    /// Read every reply already waiting, without blocking, and mark the
+    /// probes they answer.
+    fn read_waiting(
+        &self,
+        buffer: &mut [u8],
+        addresses: &[Ipv4Addr],
+        token: &[u8; 8],
+        tally: &mut Tally,
+    ) -> io::Result<()> {
+        loop {
+            match self.socket.try_recv_from(buffer) {
+                Ok((len, from)) => {
+                    if let Some(index) = self.match_reply(&buffer[..len], from, addresses, token) {
+                        tally.answered(index);
+                    }
+                }
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+                Err(err) => return Err(err),
+            }
+        }
     }
 
     async fn send_probe(&self, address: Ipv4Addr, index: usize, token: &[u8; 8]) -> io::Result<()> {
@@ -383,12 +402,15 @@ impl IcmpSocket {
 
 /// The last resort: the system `ping`, one process per address, at most
 /// `concurrency` at once. Its exit status says it all (0: a reply came), so
-/// its output is thrown away.
+/// its output is thrown away. `Err` when `ping` could not be run for any
+/// address (not installed): silence from every address would look the same
+/// as an empty network otherwise.
 async fn sweep_with_ping_command(
     addresses: &[Ipv4Addr],
     options: &SweepOptions,
+    notes: &mut Vec<String>,
     progress: &mut impl FnMut(usize, usize),
-) -> Vec<bool> {
+) -> io::Result<Vec<bool>> {
     let total = addresses.len();
     let slots = Arc::new(Semaphore::new(options.concurrency.max(1)));
     let mut tasks = JoinSet::new();
@@ -405,17 +427,37 @@ async fn sweep_with_ping_command(
     }
     let mut answered = vec![false; total];
     let mut done = 0;
+    let mut not_run = 0;
+    let mut first_failure: Option<io::Error> = None;
     while let Some(result) = tasks.join_next().await {
-        if let Ok((index, up)) = result {
-            answered[index] = up;
+        match result {
+            Ok((index, Ok(up))) => answered[index] = up,
+            Ok((_, Err(err))) => {
+                not_run += 1;
+                first_failure.get_or_insert(err);
+            }
+            Err(_panicked) => {}
         }
         done += 1;
         progress(done, total);
     }
-    answered
+    if let Some(err) = first_failure {
+        if not_run == total {
+            return Err(io::Error::new(
+                err.kind(),
+                format!("cannot run ping: {err}"),
+            ));
+        }
+        notes.push(format!(
+            "{not_run} of {total} pings could not be run: {err}"
+        ));
+    }
+    Ok(answered)
 }
 
-async fn system_ping(address: Ipv4Addr, timeout: Duration) -> bool {
+/// Whether `address` answers the system `ping`; `Err` when `ping` could not
+/// be started at all (not installed, not allowed).
+async fn system_ping(address: Ipv4Addr, timeout: Duration) -> io::Result<bool> {
     let mut command = tokio::process::Command::new("ping");
     command
         .args(ping_arguments(address, timeout))
@@ -425,8 +467,9 @@ async fn system_ping(address: Ipv4Addr, timeout: Duration) -> bool {
         .kill_on_drop(true);
     // The extra 5 s only matter if ping itself hangs; dropping it kills it.
     match tokio::time::timeout(timeout + Duration::from_secs(5), command.status()).await {
-        Ok(Ok(status)) => status.success(),
-        _ => false,
+        Ok(Ok(status)) => Ok(status.success()),
+        Ok(Err(err)) => Err(err),
+        Err(_hung) => Ok(false),
     }
 }
 
@@ -534,8 +577,29 @@ mod tests {
             return; // no ping installed: nothing to test
         }
         let addresses = [Ipv4Addr::new(127, 0, 0, 1), Ipv4Addr::new(192, 0, 2, 1)];
-        let answered = sweep_with_ping_command(&addresses, &quick(2), &mut |_, _| {}).await;
+        let mut notes = Vec::new();
+        let answered = sweep_with_ping_command(&addresses, &quick(2), &mut notes, &mut |_, _| {})
+            .await
+            .unwrap();
         assert_eq!(answered, [true, false]);
+        assert!(notes.is_empty(), "{notes:?}");
+    }
+
+    /// A `ping` that cannot start is an error, not an empty network.
+    #[tokio::test]
+    async fn a_ping_that_cannot_run_is_reported() {
+        let err = system_ping(Ipv4Addr::LOCALHOST, Duration::from_millis(100))
+            .await
+            .map(|_| ()); // whatever this machine's ping says
+        let _ = err;
+        let mut command = tokio::process::Command::new("/no/such/ping");
+        command.arg("-c").arg("1").kill_on_drop(true);
+        let status = command.status().await;
+        assert_eq!(
+            status.map(|_| ()).unwrap_err().kind(),
+            io::ErrorKind::NotFound,
+            "a spawn failure comes back as an error, which system_ping passes on"
+        );
     }
 
     #[test]

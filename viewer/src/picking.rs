@@ -245,7 +245,9 @@ fn clicks(
     mut picker: ResMut<Picker>,
     mut controls: ResMut<FlyControls>,
 ) {
-    let cursor = window.cursor_position();
+    // While the right button holds the look, the cursor is hidden and
+    // locked: a left click then is no click, as hover already treats it.
+    let cursor = window.cursor_position().filter(|_| !controls.looking);
     if buttons.just_pressed(MouseButton::Left) {
         picker.press(if ui.pointer { None } else { cursor });
     }
