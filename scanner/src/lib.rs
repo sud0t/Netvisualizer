@@ -4,6 +4,7 @@
 //! - local.rs: this machine's networks: interfaces, subnets, gateways.
 //! - icmp.rs: ICMP echo packets, built and read by hand.
 //! - sweep.rs: the ping sweep, finding which addresses answer.
+//! - neighbours.rs: the kernel's ARP table, the MACs of the hosts found.
 //! - names.rs: reverse DNS, naming the hosts found.
 //! - ports.rs: the TCP connect scan, service names, port lists.
 //!
@@ -15,10 +16,11 @@ pub mod icmp;
 pub mod local;
 pub mod model;
 pub mod names;
+pub mod neighbours;
 pub mod ports;
 pub mod sweep;
 
 // The network type the scanner's API speaks, so its users need no ipnet of their own.
 pub use ipnet::Ipv4Net;
 pub use local::LocalNetwork;
-pub use model::{Host, Port, Proto};
+pub use model::{Host, MacAddr, Port, Proto};

@@ -15,6 +15,8 @@
       "role": "scanner",
       "ip": "192.168.1.50",
       "hostname": "netvisualizer-host.lan",
+      "mac": null,
+      "vendor": null,
       "open_ports": [
         {
           "number": 22,
@@ -38,6 +40,8 @@
       "role": "gateway",
       "ip": "192.168.1.1",
       "hostname": "gateway.lan",
+      "mac": "00:0a:eb:11:01:25",
+      "vendor": "TP-Link",
       "open_ports": [
         {
           "number": 53,
@@ -56,9 +60,7 @@
         }
       ],
       "is_local": null,
-      "extra": {
-        "vendor": "TP-Link"
-      },
+      "extra": {},
       "position": [
         8.0,
         0.0,
@@ -71,6 +73,8 @@
       "role": "host",
       "ip": "192.168.1.9",
       "hostname": null,
+      "mac": null,
+      "vendor": null,
       "open_ports": [
         {
           "number": 139,
@@ -102,6 +106,8 @@
       "role": "host",
       "ip": "192.168.1.18",
       "hostname": "nas-2.lan",
+      "mac": null,
+      "vendor": null,
       "open_ports": [
         {
           "number": 22,
@@ -140,6 +146,8 @@
       "role": "host",
       "ip": "192.168.1.26",
       "hostname": null,
+      "mac": null,
+      "vendor": null,
       "open_ports": [
         {
           "number": 53,
@@ -172,10 +180,12 @@
     },
     {
       "id": "192.168.1.32",
-      "label": "192.168.1.32",
+      "label": "TP-Link (192.168.1.32)",
       "role": "host",
       "ip": "192.168.1.32",
       "hostname": null,
+      "mac": "00:0a:eb:14:20:a0",
+      "vendor": "TP-Link",
       "open_ports": [
         {
           "number": 5353,
@@ -195,7 +205,6 @@
       ],
       "is_local": null,
       "extra": {
-        "vendor": "TP-Link",
         "latency_ms": 13.5
       },
       "position": [
@@ -206,10 +215,12 @@
     },
     {
       "id": "192.168.1.36",
-      "label": "192.168.1.36",
+      "label": "Sony (192.168.1.36)",
       "role": "host",
       "ip": "192.168.1.36",
       "hostname": null,
+      "mac": "00:01:4a:11:24:34",
+      "vendor": "Sony",
       "open_ports": [
         {
           "number": 631,
@@ -233,9 +244,7 @@
         }
       ],
       "is_local": null,
-      "extra": {
-        "vendor": "Sony"
-      },
+      "extra": {},
       "position": [
         -3.061,
         0.0,
@@ -248,10 +257,11 @@
       "role": "host",
       "ip": "192.168.1.56",
       "hostname": "ap-6.lan",
+      "mac": "00:15:6d:10:38:18",
+      "vendor": "Ubiquiti",
       "open_ports": [],
       "is_local": null,
       "extra": {
-        "vendor": "Ubiquiti",
         "latency_ms": 7.2
       },
       "position": [
@@ -266,6 +276,8 @@
       "role": "host",
       "ip": "192.168.1.68",
       "hostname": "tablet-7.lan",
+      "mac": null,
+      "vendor": null,
       "open_ports": [
         {
           "number": 80,
@@ -290,10 +302,12 @@
     },
     {
       "id": "192.168.1.100",
-      "label": "192.168.1.100",
+      "label": "TP-Link (192.168.1.100)",
       "role": "host",
       "ip": "192.168.1.100",
       "hostname": null,
+      "mac": "00:0a:eb:12:64:74",
+      "vendor": "TP-Link",
       "open_ports": [
         {
           "number": 8080,
@@ -308,7 +322,6 @@
       ],
       "is_local": null,
       "extra": {
-        "vendor": "TP-Link",
         "latency_ms": 39.3
       },
       "position": [
@@ -323,6 +336,8 @@
       "role": "host",
       "ip": "192.168.1.102",
       "hostname": "pi-9.lan",
+      "mac": "00:12:f0:14:66:be",
+      "vendor": "Intel",
       "open_ports": [
         {
           "number": 443,
@@ -332,7 +347,6 @@
       ],
       "is_local": null,
       "extra": {
-        "vendor": "Intel",
         "latency_ms": 21.7
       },
       "position": [
@@ -343,10 +357,12 @@
     },
     {
       "id": "192.168.1.113",
-      "label": "192.168.1.113",
+      "label": "HP (192.168.1.113)",
       "role": "host",
       "ip": "192.168.1.113",
       "hostname": null,
+      "mac": "04:0e:3c:11:71:55",
+      "vendor": "HP",
       "open_ports": [
         {
           "number": 631,
@@ -356,7 +372,6 @@
       ],
       "is_local": null,
       "extra": {
-        "vendor": "HP",
         "latency_ms": 11.0
       },
       "position": [
@@ -371,10 +386,11 @@
       "role": "host",
       "ip": "192.168.1.118",
       "hostname": "tablet-11.lan",
+      "mac": "00:05:02:16:76:0e",
+      "vendor": "Apple",
       "open_ports": [],
       "is_local": null,
       "extra": {
-        "vendor": "Apple",
         "latency_ms": 22.6
       },
       "position": [
@@ -389,6 +405,8 @@
       "role": "host",
       "ip": "192.168.1.123",
       "hostname": "nas-12.lan",
+      "mac": "00:15:6d:14:7b:c7",
+      "vendor": "Ubiquiti",
       "open_ports": [
         {
           "number": 445,
@@ -408,7 +426,6 @@
       ],
       "is_local": null,
       "extra": {
-        "vendor": "Ubiquiti",
         "latency_ms": 14.5
       },
       "position": [
@@ -423,6 +440,8 @@
       "role": "host",
       "ip": "192.168.1.127",
       "hostname": "switch-13.lan",
+      "mac": "00:00:f0:11:7f:5b",
+      "vendor": "Samsung",
       "open_ports": [
         {
           "number": 3389,
@@ -447,7 +466,6 @@
       ],
       "is_local": null,
       "extra": {
-        "vendor": "Samsung",
         "latency_ms": 22.2
       },
       "position": [
@@ -462,6 +480,8 @@
       "role": "host",
       "ip": "192.168.1.129",
       "hostname": "printer-14.lan",
+      "mac": null,
+      "vendor": null,
       "open_ports": [
         {
           "number": 139,
@@ -500,6 +520,8 @@
       "role": "host",
       "ip": "192.168.1.148",
       "hostname": "phone-15.lan",
+      "mac": null,
+      "vendor": null,
       "open_ports": [],
       "is_local": null,
       "extra": {
@@ -517,6 +539,8 @@
       "role": "host",
       "ip": "192.168.1.158",
       "hostname": "phone-16.lan",
+      "mac": "04:0e:3c:14:9e:d6",
+      "vendor": "HP",
       "open_ports": [
         {
           "number": 443,
@@ -541,7 +565,6 @@
       ],
       "is_local": null,
       "extra": {
-        "vendor": "HP",
         "latency_ms": 4.8
       },
       "position": [
@@ -556,6 +579,8 @@
       "role": "host",
       "ip": "192.168.1.169",
       "hostname": "tv-17.lan",
+      "mac": "00:00:f0:11:a9:6d",
+      "vendor": "Samsung",
       "open_ports": [
         {
           "number": 53,
@@ -574,9 +599,7 @@
         }
       ],
       "is_local": null,
-      "extra": {
-        "vendor": "Samsung"
-      },
+      "extra": {},
       "position": [
         8.229,
         1.5,
@@ -589,6 +612,8 @@
       "role": "host",
       "ip": "192.168.1.197",
       "hostname": "nas-18.lan",
+      "mac": "00:12:f0:11:c5:79",
+      "vendor": "Intel",
       "open_ports": [
         {
           "number": 22,
@@ -598,7 +623,6 @@
       ],
       "is_local": null,
       "extra": {
-        "vendor": "Intel",
         "latency_ms": 6.7
       },
       "position": [
@@ -609,10 +633,12 @@
     },
     {
       "id": "192.168.1.198",
-      "label": "192.168.1.198",
+      "label": "Intel (192.168.1.198)",
       "role": "host",
       "ip": "192.168.1.198",
       "hostname": null,
+      "mac": "00:12:f0:12:c6:9e",
+      "vendor": "Intel",
       "open_ports": [
         {
           "number": 5353,
@@ -632,7 +658,6 @@
       ],
       "is_local": null,
       "extra": {
-        "vendor": "Intel",
         "latency_ms": 23.2
       },
       "position": [
@@ -647,6 +672,8 @@
       "role": "host",
       "ip": "192.168.1.204",
       "hostname": "server-20.lan",
+      "mac": null,
+      "vendor": null,
       "open_ports": [
         {
           "number": 22,
@@ -678,10 +705,11 @@
       "role": "host",
       "ip": "192.168.1.208",
       "hostname": "thermostat-21.lan",
+      "mac": "00:0a:eb:15:d0:10",
+      "vendor": "TP-Link",
       "open_ports": [],
       "is_local": null,
       "extra": {
-        "vendor": "TP-Link",
         "latency_ms": 16.8
       },
       "position": [
@@ -696,6 +724,8 @@
       "role": "host",
       "ip": "192.168.1.216",
       "hostname": "nas-22.lan",
+      "mac": "00:12:f0:16:d8:38",
+      "vendor": "Intel",
       "open_ports": [
         {
           "number": 22,
@@ -720,7 +750,6 @@
       ],
       "is_local": null,
       "extra": {
-        "vendor": "Intel",
         "latency_ms": 14.1
       },
       "position": [
@@ -735,6 +764,8 @@
       "role": "host",
       "ip": "192.168.1.219",
       "hostname": "server-23.lan",
+      "mac": "00:15:6d:12:db:a7",
+      "vendor": "Ubiquiti",
       "open_ports": [
         {
           "number": 3389,
@@ -754,7 +785,6 @@
       ],
       "is_local": null,
       "extra": {
-        "vendor": "Ubiquiti",
         "latency_ms": 20.1
       },
       "position": [
@@ -769,6 +799,8 @@
       "role": "host",
       "ip": "192.168.1.231",
       "hostname": "thermostat-24.lan",
+      "mac": "04:0e:3c:10:e7:63",
+      "vendor": "HP",
       "open_ports": [
         {
           "number": 139,
@@ -787,9 +819,7 @@
         }
       ],
       "is_local": null,
-      "extra": {
-        "vendor": "HP"
-      },
+      "extra": {},
       "position": [
         8.229,
         1.5,
@@ -802,6 +832,8 @@
       "role": "host",
       "ip": "192.168.1.250",
       "hostname": "desktop-25.lan",
+      "mac": "b8:27:eb:15:fa:22",
+      "vendor": "Raspberry Pi",
       "open_ports": [
         {
           "number": 631,
@@ -815,9 +847,7 @@
         }
       ],
       "is_local": null,
-      "extra": {
-        "vendor": "Raspberry Pi"
-      },
+      "extra": {},
       "position": [
         13.315,
         1.5,

@@ -7,8 +7,9 @@
 //! fog, floor and framing; graph.rs draws the hosts and links; controls.rs
 //! flies the camera; picking.rs handles hover, clicks and the selection;
 //! panel.rs is the sidebar; ui.rs draws the labels, HUD, legend and help;
-//! theme.rs holds the colours; python.rs is the embedded Python. This file
-//! holds the arguments, the wiring, and the keys that need everything.
+//! theme.rs holds the colours; python.rs is the embedded Python and
+//! vendors.rs the scan stage that runs in it. This file holds the
+//! arguments, the wiring, and the keys that need everything.
 //!
 //!     cargo run --features dev                                      # the window, no scan
 //!     cargo run --features dev -- --scan --ports                    # scan the local subnet, then common ports
@@ -27,6 +28,7 @@ mod scan;
 mod scene;
 mod theme;
 mod ui;
+mod vendors;
 
 use std::path::PathBuf;
 use std::process::ExitCode;

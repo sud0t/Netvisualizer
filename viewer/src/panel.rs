@@ -202,8 +202,8 @@ pub fn compare_rows(a: &Row, b: &Row) -> Ordering {
         .then_with(|| ka.cmp(&kb))
 }
 
-/// What the filter matches: label, id, hostname, role and "number/proto"
-/// for each port, skipping the ones that are missing.
+/// What the filter matches: label, id, hostname, MAC, vendor, role and
+/// "number/proto" for each port, skipping the ones that are missing.
 pub fn search_text(host: &Host) -> String {
     let mut parts: Vec<String> = Vec::new();
     let mut push = |s: &str| {
@@ -213,12 +213,14 @@ pub fn search_text(host: &Host) -> String {
     };
     push(host.label.as_deref().unwrap_or_default());
     push(&host.id);
-    push(
-        host.fields
-            .get("hostname")
-            .and_then(Value::as_str)
-            .unwrap_or_default(),
-    );
+    for key in ["hostname", "mac", "vendor"] {
+        push(
+            host.fields
+                .get(key)
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        );
+    }
     push(host.role.as_deref().unwrap_or_default());
     if let Some(ports) = host.fields.get("open_ports").and_then(Value::as_array) {
         for port in ports {
@@ -476,7 +478,8 @@ fn draw_list(
         });
 }
 
-/// One host-list row: role dot, name (ellipsised), ip on the right when it differs.
+/// One host-list row: role dot, name (ellipsised), ip on the right unless the
+/// name already says it ("Raspberry Pi Foundation (192.168.1.251)").
 fn draw_row(ui: &mut egui::Ui, rect: egui::Rect, row: &Row, selected: bool) -> egui::Response {
     let response = ui
         .interact(rect, ui.id().with(("host", &row.id)), egui::Sense::click())
@@ -502,7 +505,7 @@ fn draw_row(ui: &mut egui::Ui, rect: egui::Rect, row: &Row, selected: bool) -> e
     x += DOT_SIZE + GAP;
 
     let mut right = rect.right() - ROW_PADDING_X;
-    if row.label != row.id {
+    if !row.label.contains(&row.id) {
         let ip = painter.layout_no_wrap(
             row.id.clone(),
             egui::FontId::monospace(MONO_PX),
@@ -781,14 +784,15 @@ mod tests {
     }
 
     #[test]
-    fn the_filter_matches_label_id_hostname_role_and_ports() {
+    fn the_filter_matches_label_id_hostname_mac_vendor_role_and_ports() {
         let h = host(
             r#"{"id": "10.0.0.3", "label": "nas.lan", "role": "host", "hostname": "nas.lan",
+                "mac": "00:11:32:AB:CD:EF", "vendor": "Synology Incorporated",
                 "open_ports": [{"number": 22, "proto": "tcp"}, {"number": 445, "proto": "tcp"}]}"#,
         );
         assert_eq!(
             search_text(&h),
-            "nas.lan 10.0.0.3 nas.lan host 22/tcp 445/tcp"
+            "nas.lan 10.0.0.3 nas.lan 00:11:32:ab:cd:ef synology incorporated host 22/tcp 445/tcp"
         );
         // Missing keys are skipped, not written as "undefined" or "null".
         assert_eq!(

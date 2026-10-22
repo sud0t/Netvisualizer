@@ -8,8 +8,10 @@
 //! 1. the sweep: an ICMP echo request to every address (`scanner::sweep`);
 //! 2. the gateway is kept even if it ignored the ping, and every host is
 //!    marked as on our own subnet or not;
-//! 3. names, unless turned off: reverse DNS (`scanner::names`);
-//! 4. ports, when asked for: the TCP connect scan (`scanner::ports`).
+//! 3. MACs from the kernel's ARP table, which the sweep just filled
+//!    (`scanner::neighbours`), then their vendors through Python (vendors.rs);
+//! 4. names, unless turned off: reverse DNS (`scanner::names`);
+//! 5. ports, when asked for: the TCP connect scan (`scanner::ports`).
 //!
 //! The scanner is async (hundreds of probes in flight at once), so a scan
 //! runs on its own thread with its own tokio runtime and reports over a
@@ -28,6 +30,7 @@ use bevy::prelude::*;
 use scanner::Ipv4Net;
 use scanner::local::{self, LocalNetwork, LocalNetworkError};
 use scanner::names;
+use scanner::neighbours;
 use scanner::ports::{self, PortScanOptions};
 use scanner::sweep::{self, SweepOptions};
 use serde_json::Value;
@@ -36,6 +39,7 @@ use crate::ViewerSet;
 use crate::graph::MapDocument;
 use crate::map::{MapDoc, Scan, Status as HostStatus};
 use crate::ui::Status;
+use crate::vendors;
 
 /// How often the scan thread reports progress at most.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
@@ -179,6 +183,21 @@ async fn run(plan: &ScanPlan, tx: &Sender<ScanEvent>) -> Result<(), String> {
     let mut hosts = sweep.hosts;
     keep_gateway(&mut hosts, plan.local.gateway, &plan.network);
     local::mark_local(&mut hosts, &plan.local.network);
+
+    // The sweep made the kernel ARP for every address on our link that
+    // answered, so their MACs are in its table now; a loopback or remote-only
+    // scan has none, and then there is nothing to look up either.
+    let with_mac = neighbours::attach_macs(&mut hosts, &neighbours::known_macs(&plan.local));
+    if with_mac > 0 {
+        report.map(&hosts, "looking up vendors…");
+        match vendors::look_up(&mut hosts) {
+            Ok(named) => report.note(format!(
+                "{with_mac} of {} hosts have a MAC, {named} a vendor",
+                hosts.len()
+            )),
+            Err(err) => report.note(format!("vendor names skipped: {err}")),
+        }
+    }
 
     if settings.names {
         report.map(&hosts, "resolving names…");
@@ -440,21 +459,17 @@ pub fn run_headless(plan: ScanPlan) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// One line per host: role, address, name, open ports.
+/// One line per host: role, address, name, MAC, vendor, open ports.
 ///
 /// ```text
-/// scanner  192.168.1.143    kylr-laptop
-/// gateway  192.168.1.254    router.lan               53/tcp domain, 80/tcp http
+/// scanner  192.168.1.143    kylr-laptop              78:2b:46:07:06:cf Intel Corporate
+/// gateway  192.168.1.254    router.lan               08:c7:f5:ed:02:cb -                        53/tcp domain, 80/tcp http
 /// ```
 fn host_table(map: &MapDoc) -> Vec<String> {
     map.hosts
         .iter()
         .map(|host| {
-            let name = host
-                .fields
-                .get("hostname")
-                .and_then(Value::as_str)
-                .unwrap_or("-");
+            let text = |key: &str| host.fields.get(key).and_then(Value::as_str).unwrap_or("-");
             let ports: Vec<String> = host
                 .fields
                 .get("open_ports")
@@ -478,10 +493,12 @@ fn host_table(map: &MapDoc) -> Vec<String> {
                 tail.push_str("(down)");
             }
             format!(
-                "{:<8} {:<16} {:<24} {tail}",
+                "{:<8} {:<16} {:<24} {:<17} {:<24} {tail}",
                 host.role().name(),
                 host.id,
-                name
+                text("hostname"),
+                text("mac"),
+                text("vendor"),
             )
             .trim_end()
             .to_string()
@@ -701,17 +718,18 @@ mod tests {
         assert_eq!(table.len(), 28);
         assert_eq!(
             table[0],
-            "scanner  192.168.1.50     netvisualizer-host.lan   22/tcp"
+            "scanner  192.168.1.50     netvisualizer-host.lan   -                 -                        22/tcp"
         );
         assert!(
-            table[1]
-                .starts_with("gateway  192.168.1.1      gateway.lan              53/udp, 80/tcp"),
+            table[1].starts_with(
+                "gateway  192.168.1.1      gateway.lan              00:0a:eb:11:01:25 TP-Link                  53/udp, 80/tcp"
+            ),
             "{}",
             table[1]
         );
         assert_eq!(
             table[27],
-            "host     192.168.1.254    -                        (down)"
+            "host     192.168.1.254    -                        -                 -                        (down)"
         );
     }
 

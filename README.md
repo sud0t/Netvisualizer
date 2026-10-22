@@ -2,8 +2,9 @@
 
 Finds the hosts on your network and shows them as a 3D map in its own window.
 
-A ping sweep finds the hosts, reverse DNS names them, and an optional TCP
-connect scan lists their open ports. It is one Rust program: the scanner
+A ping sweep finds the hosts, the kernel's ARP table gives their MAC
+addresses and the IEEE's vendor list says who made them, reverse DNS names
+them, and an optional TCP connect scan lists their open ports. It is one Rust program: the scanner
 builds its own ICMP echo requests and sends them on an unprivileged ICMP
 socket (no root needed, see below), and the map is drawn with Bevy: fly
 around with the keyboard and mouse, click a host for its details.
@@ -20,7 +21,8 @@ needs `libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev`.
 The program is `target/release/netvisualizer` (or `cargo run --release --`
 followed by its arguments).
 
-The program embeds Python 3.15 for a few features (the `netvisualizer/` package):
+The program embeds Python 3.15 for a few features (the `netvisualizer/`
+package: the vendor lookup with pandas, later the SSH console):
 `.cargo/config.toml` names the interpreter (`python3.15`, installed with
 `uv python install 3.15`), and the build links its libpython, so after a Python
 upgrade, rebuild. The packages it uses live in `.venv`, made from the same Python:
@@ -97,7 +99,7 @@ Cargo.toml        the Cargo workspace: scanner + viewer
 scanner/          netvisualizer-scanner: finds hosts and fills in their values (sweep, names, ports)
   src/model.rs    Host and Port: the one shape shared by both sides
 viewer/           netvisualizer, the program: the window, and scan.rs, which runs the scanner
-netvisualizer/    the project spec (and, from Milestone 5.7, Python the program embeds)
+netvisualizer/    the project spec, and the Python the program embeds (the vendor lookup)
 tests/            Python tests
-assets/           data files: the MAC vendor CSV (Milestone 6)
+assets/           data files: the MAC vendor list (maclookup.app's CSV export)
 ```

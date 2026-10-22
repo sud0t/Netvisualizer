@@ -397,7 +397,18 @@ mod tests {
     fn keeps_every_other_field_in_document_order() {
         let doc = MapDoc::from_json(DEMO).unwrap();
         let keys: Vec<&str> = doc.hosts[0].fields.keys().map(String::as_str).collect();
-        assert_eq!(keys, ["ip", "hostname", "open_ports", "is_local", "extra"]);
+        assert_eq!(
+            keys,
+            [
+                "ip",
+                "hostname",
+                "mac",
+                "vendor",
+                "open_ports",
+                "is_local",
+                "extra"
+            ]
+        );
 
         // A field the backend adds tomorrow must survive the round trip untouched.
         let h = host(
@@ -683,6 +694,8 @@ mod tests {
                 "role",
                 "ip",
                 "hostname",
+                "mac",
+                "vendor",
                 "open_ports",
                 "is_local",
                 "extra",
