@@ -20,8 +20,14 @@
 
 /// `type` of an echo reply.
 pub const ECHO_REPLY: u8 = 0;
+/// `type` of "destination unreachable": a router (or the host) could not
+/// deliver the packet; the code says why (3 = the port is closed).
+pub const DESTINATION_UNREACHABLE: u8 = 3;
 /// `type` of an echo request.
 pub const ECHO_REQUEST: u8 = 8;
+/// `type` of "time exceeded": a router dropped the packet because its TTL
+/// ran out there. What traceroute listens for.
+pub const TIME_EXCEEDED: u8 = 11;
 /// Bytes before the data.
 pub const HEADER_LEN: usize = 8;
 

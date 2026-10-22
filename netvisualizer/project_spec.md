@@ -16,12 +16,9 @@ You are going to be handling the graphics side of this project (Rust), do not to
 ## TODO, in order
 New features come after migration steps; every step leaves the program working. Requests under "Feature requests" get planned into this list, and each is deleted from there once it is done.
 
-1. **Milestone 8: traceroute.** TTL-limited probes, so the map shows real paths with routers as nodes instead of the "behind the gateway" guess; the two-level ring layout becomes a full tree.
-2. **Milestone 9: UDP ports.** A closed UDP port answers with ICMP "port unreachable" (a connected UDP socket reports "connection refused"); silence means open or filtered.
-3. **Milestone 10: scanning from the UI.** A Scan button that sends `StartScan` as `--scan` does, the scan options, progress and cancel; after 8–9 so the options panel is built once.
-4. **Milestone 11: SSH/Telnet console.** For hosts with port 22 or 23 open, a console opened from the details card: asyncssh (and a telnet client) through the bridge, a terminal pane in egui.
+1. **Milestone 11: SSH/Telnet console.** For hosts with port 22 or 23 open, a console opened from the details card: asyncssh (and a telnet client) through the bridge, a terminal pane in egui.
 
-Done: Milestones 1–4 (the viewer) and 5 (the networking backend in Rust), 2026-10-21; 6 (MACs from the kernel's ARP table, vendor names through pandas, vendor labels) and 7 (the ARP sweep on a packet socket, ping for what it cannot reach), 2026-10-22.
+Done: Milestones 1–4 (the viewer) and 5 (the networking backend in Rust), 2026-10-21; 6 (MACs from the kernel's ARP table, vendor names through pandas, vendor labels), 7 (the ARP sweep on a packet socket, ping for what it cannot reach), 8 (traceroute: routers as nodes, the layout a tree), 9 (UDP ports) and 10 (the scan card: Scan, options, progress, Cancel), 2026-10-22.
 
 ## Architecture
 ```
@@ -33,10 +30,12 @@ scanner/          netvisualizer-scanner: finds hosts; no Bevy, no Python
   sweep.rs        the ping sweep
   arp.rs          the ARP sweep: requests built by hand on a packet socket
   neighbours.rs   the kernel's ARP table: MACs of the hosts found
+  trace.rs        traceroute: TTL-limited echo requests, the routers read off the error queue
   names.rs        reverse DNS
-  ports.rs        TCP connect scan, service names, port lists
+  ports.rs        TCP connect scan, UDP probes, service names, port lists
 viewer/           netvisualizer, the program (Bevy + bevy_egui)
   scan.rs         StartScan, the scan stages on their own thread, maps into the viewer
+  scanpanel.rs    the scan card: Scan, the options, progress, Cancel
   vendors.rs      the vendor stage: MACs to vendor names through python.rs
   map.rs          the map document: JSON contract, from_hosts, save/load
   layout.rs       positions
@@ -50,7 +49,8 @@ assets/           data files: mac-vendors-export.csv, the IEEE's MAC blocks (mac
 ## Contract
 `scanner/src/model.rs`, filled in by the scan stages and read by the viewer:
 ```rust
-pub struct Port { pub number: u16, pub proto: Proto /* "tcp" | "udp" */, pub service: Option<String> }
+pub struct Port { pub number: u16, pub proto: Proto /* "tcp" | "udp" */, pub service: Option<String>,
+                  pub state: Option<String> /* "open", or "open|filtered" for a silent UDP port; left out of the JSON when unknown */ }
 pub struct Host {
     pub ip: IpAddr,
     pub hostname: Option<String>,
@@ -71,15 +71,17 @@ Every field but `ip` has a `#[serde(default)]`, so a map saved before a field ex
               "position": [8.0, 0.0, 0.0]} ],
   "links": [ {"source": "192.168.1.50", "target": "192.168.1.10", "kind": "subnet"} ] }
 ```
-- A host entry is the `Host` serialised field by field, plus `id`, `label` (hostname; else "Vendor (ip)", so two of a kind stay apart; else ip), `role` (scanner / gateway / host) and `position`. A new `Host` field shows up in the details card with no viewer change; the sidebar filter matches label, ip, hostname, mac, vendor, role and ports.
+- A host entry is the `Host` serialised field by field, plus `id`, `label` (hostname; else "Vendor (ip)", so two of a kind stay apart; else ip), `role` (scanner / gateway / router / host) and `position`. A host traceroute reached carries `extra.path` (the hops in order, `*` for a silent one) and `extra.latency_ms`. A new `Host` field shows up in the details card with no viewer change; the sidebar filter matches label, ip, hostname, mac, vendor, role and ports.
 - `extra.mac_note` marks a MAC with no vendor whose locally administered bit (0x02 of the first octet) is set: made up on the device, as phones do for privacy. The IEEE's CID blocks set that bit too, hence the lookup first.
 - `scan.type` is `arp_sweep`, `ping_sweep` or `arp_ping_sweep` (see Scanning), `demo` in the fixture.
-- Links follow the packets as far as a sweep can tell: `"subnet"` from the scanner to each host on its own subnet, `"route"` from the gateway to each host outside it (from the scanner when the map has no gateway). The layout follows the links: the scanner at the origin, its hosts on rings around it (gateway first, then by address), hosts behind the gateway on rings of their own beyond it.
+- Links follow the packets: `"subnet"` from the scanner to each host on its own subnet; for a host beyond it, `"route"` links along its traced path, one per router (a router the scan did not list becomes a host with role `router`); without a path, the guess, `"route"` from the gateway (from the scanner when the map has no gateway). The layout follows the links: the scanner at the origin, its hosts on rings around it (gateway first, then by address), and every further level on rings of its own straight out beyond the host it hangs off.
 - `extra.status == "down"` draws a host grey; the scan uses it for a gateway that was swept and did not answer.
 
 ## Scanning
-- Nothing touches the network until a `StartScan` message arrives: `--scan [CIDR]` sends one at start-up, and the Milestone 10 button will send the same. One scan at a time, with the settings in the `ScanSettings` resource.
-- The stages run on a thread with its own tokio runtime and hand the viewer a new map after each: sweep → keep the scanner and the gateway → mark local hosts → MACs → vendors → reverse DNS (the scanner's own name from `gethostname`) → TCP ports if asked → done (and `--save`). Bevy systems only read what has arrived over the channel.
+- Nothing touches the network until a `StartScan` message arrives: `--scan [CIDR]` sends one at start-up, and the scan card's Scan button sends the same. One scan at a time, with the settings in the `ScanSettings` resource: the card's fields (seeded from the command line) are parsed with the command line's own validators into that resource. While a scan runs, the card shows the stage and the running stage's progress (`ScanJob`), and Cancel notifies a `Notify` the scan thread selects on against the stages, which drops every probe in flight; the maps sent so far stand.
+- The stages run on a thread with its own tokio runtime and hand the viewer a new map after each: sweep → keep the scanner and the gateway → mark local hosts → traceroute to the hosts beyond the subnet → MACs → vendors → reverse DNS (the scanner's own name from `gethostname`) → TCP ports if asked → UDP ports if asked → done (and `--save`). Bevy systems only read what has arrived over the channel.
+- UDP ports (`--udp [PORTS]`, "common" = 12 LAN services): one empty datagram from a connected UDP socket per port; "connection refused" (the kernel's reading of the host's ICMP port unreachable) means closed and the port is not listed; an answer means open; silence means open or filtered, listed with `state` "open|filtered" (`53/udp?` in the `--no-window` table). One host's ports go one after another, because Linux sends about one unreachable a second per address after a short burst.
+- Traceroute (`--no-trace` turns it off): echo requests with TTL 1, 2, … on a connected ICMP datagram socket with `IP_RECVERR`, so the kernel queues each router's "time exceeded" on the socket's error queue, read with `recvmsg(MSG_ERRQUEUE)`, the router's address attached. No root. One probe per hop, `timeout` each, 30 hops at most; a silent hop stays a `*`; the routers found join the host list; a path that found nothing leaves the gateway guess in place.
 - The sweep is ARP for the part of the network on our own link, and ping for the whole network when it reaches beyond the link (ARP is not routed, but every host on the link must answer it, ping or no ping; the hosts ARP found keep their entries). `scan.type` says which ran: `arp_sweep`, `ping_sweep`, or `arp_ping_sweep` for both. The ARP sweep needs a packet socket (`AF_PACKET`/`SOCK_RAW`, bound to the interface and EtherType 0x0806), so root or `CAP_NET_RAW` (`sudo setcap cap_net_raw+ep target/release/netvisualizer`, again after each build); without it, with `--no-arp`, or when the ARP sweep fails midway, ping covers everything. It asks every address but ours, asks the silent ones once more, and listens `timeout` after the last request; any ARP frame from an address in the network, reply or overheard request, counts. The sweep never finds the scanner itself, so the scan adds it. Without root it can still be tried in a user namespace: `scripts/arp-sandbox.sh`.
 - MACs come with the ARP replies; for pinged hosts, from `/proc/net/arp` (rows with flags 0x2, complete), which the pings filled: to ping an address on our link the kernel first ARPs for it. No root; Linux only. The scanner's own is `/sys/class/net/<iface>/address`. Hosts behind the gateway have none (the kernel ARPs for the gateway instead).
 - The vendor stage runs in Python (`viewer/src/vendors.rs` → `netvisualizer/vendors.py`), blocking the scan thread between the Rust stages; without pandas it skips itself with a note.

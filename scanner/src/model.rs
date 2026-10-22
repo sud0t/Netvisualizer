@@ -132,6 +132,12 @@ pub struct Port {
     /// The well-known name for the port, e.g. "ssh" for 22/tcp, if it has one.
     #[serde(default)]
     pub service: Option<String>,
+    /// How sure the scan is: "open" (a connection was accepted, or an
+    /// answer came), or "open|filtered" for a UDP port that stayed silent,
+    /// which UDP cannot tell apart from a dropped probe. Left out of the
+    /// JSON when unknown, so maps from before it existed read back as is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
 }
 
 /// One machine on the network. The sweep creates it from an address that
@@ -208,6 +214,7 @@ mod tests {
             number: 22,
             proto: Proto::Tcp,
             service: Some("ssh".into()),
+            state: None,
         });
         host.mac = Some("00:11:32:ab:cd:ef".parse().unwrap());
         host.vendor = Some("Synology Incorporated".into());
@@ -236,6 +243,15 @@ mod tests {
                 "is_local",
                 "extra"
             ]
+        );
+        assert_eq!(serde_json::from_value::<Host>(value).unwrap(), host);
+
+        // A port's state is written only once the scan has one.
+        host.open_ports[0].state = Some("open|filtered".into());
+        let value = serde_json::to_value(&host).unwrap();
+        assert_eq!(
+            value["open_ports"][0],
+            json!({"number": 22, "proto": "tcp", "service": "ssh", "state": "open|filtered"})
         );
         assert_eq!(serde_json::from_value::<Host>(value).unwrap(), host);
     }

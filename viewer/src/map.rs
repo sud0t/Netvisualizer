@@ -10,13 +10,13 @@
 //! document order, so the generic details card in panel.rs shows it with no
 //! change here when the scanner learns something new.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs;
 use std::net::IpAddr;
-use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use scanner::trace::Path;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
@@ -98,6 +98,8 @@ pub struct Link {
 pub enum Role {
     Scanner,
     Gateway,
+    /// A router traceroute found on the way to some host.
+    Router,
     Host,
 }
 
@@ -106,6 +108,7 @@ impl Role {
         match raw {
             Some("scanner") => Role::Scanner,
             Some("gateway") => Role::Gateway,
+            Some("router") => Role::Router,
             _ => Role::Host,
         }
     }
@@ -114,6 +117,7 @@ impl Role {
         match self {
             Role::Scanner => "scanner",
             Role::Gateway => "gateway",
+            Role::Router => "router",
             Role::Host => "host",
         }
     }
@@ -159,14 +163,17 @@ impl Host {
 impl MapDoc {
     /// The map of what a scan has found so far:
     ///
-    /// - every host once (of two with the same address, the first wins);
+    /// - every host once (of two with the same address, the first wins),
+    ///   plus every router a path names that the scan did not list;
     /// - the scanner in the middle with role "scanner", added at the front if
-    ///   the scan did not find it itself, and the gateway with role "gateway";
-    /// - links the way packets go, as far as a sweep can tell: a host on the
-    ///   scanner's own subnet is reached directly (a "subnet" link from the
-    ///   scanner), a host outside it (`is_local: false`) through the gateway
-    ///   (a "route" link from the gateway, or from the scanner when the map
-    ///   has no gateway);
+    ///   the scan did not find it itself, the gateway with role "gateway",
+    ///   and a host some path passes through with role "router";
+    /// - links the way packets go: a host on the scanner's own subnet is
+    ///   reached directly (a "subnet" link from the scanner); a host with a
+    ///   traced path through its routers, in order ("route" links, one per
+    ///   step); a host outside the subnet without one through the gateway
+    ///   (the guess: a "route" link from the gateway, or from the scanner
+    ///   when the map has no gateway);
     /// - positions from [`layout::star_ring`], which follows the links.
     ///
     /// `scan.scanner_ip` is filled in from `scanner_ip`.
@@ -174,6 +181,7 @@ impl MapDoc {
         hosts: &[scanner::Host],
         scanner_ip: Option<IpAddr>,
         gateway_ip: Option<IpAddr>,
+        paths: &[Path],
         mut scan: Scan,
     ) -> MapDoc {
         let mut seen = HashSet::new();
@@ -181,27 +189,73 @@ impl MapDoc {
         let missing_scanner = scanner_ip
             .filter(|ip| !seen.contains(ip))
             .map(scanner::Host::new);
-        let all: Vec<&scanner::Host> = missing_scanner.iter().chain(unique).collect();
+        let routers: HashSet<IpAddr> = paths
+            .iter()
+            .flat_map(Path::routers)
+            .map(IpAddr::V4)
+            .collect();
+        let missing_routers: Vec<scanner::Host> = routers
+            .iter()
+            .filter(|ip| seen.insert(**ip))
+            .map(|ip| scanner::Host::new(*ip))
+            .collect();
+        let all: Vec<&scanner::Host> = missing_scanner
+            .iter()
+            .chain(unique)
+            .chain(&missing_routers)
+            .collect();
 
         let links = match scanner_ip {
             Some(scanner) => {
                 let gateway = gateway_ip.filter(|ip| all.iter().any(|h| h.ip == *ip));
-                all.iter()
-                    .filter(|h| h.ip != scanner)
-                    .map(|h| {
-                        let (source, kind) = if h.is_local == Some(false) && Some(h.ip) != gateway {
-                            (gateway.unwrap_or(scanner), "route")
-                        } else {
-                            (scanner, "subnet")
-                        };
-                        Link {
-                            source: source.to_string(),
-                            target: h.ip.to_string(),
+                let added: HashSet<IpAddr> = missing_routers.iter().map(|h| h.ip).collect();
+                // A path worth drawing reached its host or found a router.
+                let traced: HashMap<IpAddr, &Path> = paths
+                    .iter()
+                    .filter(|p| p.reached || p.routers().next().is_some())
+                    .map(|p| (IpAddr::V4(p.target), p))
+                    .collect();
+                let mut links: Vec<Link> = Vec::new();
+                let mut link = |source: IpAddr, target: IpAddr, kind: &str| {
+                    let (source, target) = (source.to_string(), target.to_string());
+                    if source != target
+                        && !links
+                            .iter()
+                            .any(|l| l.source == source && l.target == target)
+                    {
+                        links.push(Link {
+                            source,
+                            target,
                             kind: Some(kind.to_string()),
                             rest: Map::new(),
-                        }
-                    })
-                    .collect()
+                        });
+                    }
+                };
+                // First the hosts reached directly, or guessed to be behind
+                // the gateway; then the traced paths, step by step, so a
+                // router that is also a host keeps its own link.
+                for h in all.iter().filter(|h| h.ip != scanner) {
+                    if traced.contains_key(&h.ip) || added.contains(&h.ip) {
+                        continue;
+                    }
+                    if h.is_local == Some(false) && Some(h.ip) != gateway {
+                        link(gateway.unwrap_or(scanner), h.ip, "route");
+                    } else {
+                        link(scanner, h.ip, "subnet");
+                    }
+                }
+                for h in all.iter().filter(|h| h.ip != scanner) {
+                    let Some(path) = traced.get(&h.ip) else {
+                        continue;
+                    };
+                    let mut previous = scanner;
+                    for router in path.routers() {
+                        link(previous, IpAddr::V4(router), "route");
+                        previous = IpAddr::V4(router);
+                    }
+                    link(previous, h.ip, "route");
+                }
+                links
             }
             None => Vec::new(),
         };
@@ -213,6 +267,8 @@ impl MapDoc {
                     Role::Scanner
                 } else if Some(host.ip) == gateway_ip {
                     Role::Gateway
+                } else if routers.contains(&host.ip) {
+                    Role::Router
                 } else {
                     Role::Host
                 };
@@ -244,12 +300,12 @@ impl MapDoc {
         Ok(doc)
     }
 
-    pub fn load(path: &Path) -> Result<MapDoc, Box<dyn Error>> {
+    pub fn load(path: &std::path::Path) -> Result<MapDoc, Box<dyn Error>> {
         Ok(MapDoc::from_json(&fs::read_to_string(path)?)?)
     }
 
     /// Write the map as indented JSON; [`MapDoc::load`] reads it back.
-    pub fn save(&self, path: &Path) -> Result<(), Box<dyn Error>> {
+    pub fn save(&self, path: &std::path::Path) -> Result<(), Box<dyn Error>> {
         let mut text = serde_json::to_string_pretty(self)?;
         text.push('\n');
         fs::write(path, text)?;
@@ -545,6 +601,7 @@ mod tests {
             &scanned(&["10.0.0.2", "10.0.0.3"]),
             Some(ip("10.0.0.1")),
             None,
+            &[],
             Scan::default(),
         );
         assert_eq!(ids(&doc), ["10.0.0.1", "10.0.0.2", "10.0.0.3"]);
@@ -560,6 +617,7 @@ mod tests {
             &scanned(&["10.0.0.1", "10.0.0.2"]),
             Some(ip("10.0.0.1")),
             None,
+            &[],
             Scan::default(),
         );
         assert_eq!(ids(&doc), ["10.0.0.1", "10.0.0.2"]);
@@ -572,6 +630,7 @@ mod tests {
             &scanned(&["10.0.0.2", "10.0.0.3", "10.0.0.4"]),
             Some(ip("10.0.0.1")),
             None,
+            &[],
             Scan::default(),
         );
         let links: Vec<(&str, &str)> = doc
@@ -604,6 +663,7 @@ mod tests {
             &hosts,
             Some(ip("10.0.0.1")),
             Some(ip("10.0.0.254")),
+            &[],
             Scan::default(),
         );
         let links: Vec<(&str, &str, Option<&str>)> = doc
@@ -632,6 +692,7 @@ mod tests {
             &hosts,
             Some(ip("10.0.0.1")),
             Some(ip("10.0.0.254")), // not on the map
+            &[],
             Scan::default(),
         );
         let links: Vec<(&str, Option<&str>)> = doc
@@ -652,6 +713,7 @@ mod tests {
             &scanned(&["10.0.0.2", "10.0.0.3"]),
             None,
             None,
+            &[],
             Scan::default(),
         );
         assert!(doc.links.is_empty());
@@ -666,6 +728,7 @@ mod tests {
             &hosts,
             Some(ip("10.0.0.5")),
             Some(ip("10.0.0.1")),
+            &[],
             Scan::default(),
         );
         assert_eq!(role_of(&doc, "10.0.0.1"), Role::Gateway);
@@ -675,9 +738,86 @@ mod tests {
             &hosts,
             Some(ip("10.0.0.1")),
             Some(ip("10.0.0.1")),
+            &[],
             Scan::default(),
         );
         assert_eq!(role_of(&doc, "10.0.0.1"), Role::Scanner);
+    }
+
+    fn hop(ttl: u8, router: Option<&str>) -> scanner::trace::Hop {
+        scanner::trace::Hop {
+            ttl,
+            router: router.map(|r| r.parse().unwrap()),
+            rtt: router.map(|_| Duration::from_millis(5)),
+        }
+    }
+
+    #[test]
+    fn a_traced_path_links_through_its_routers() {
+        let mut hosts = scanned(&["10.0.0.1", "10.0.0.254", "203.0.113.9"]);
+        hosts[2].is_local = Some(false);
+        let path = Path {
+            target: "203.0.113.9".parse().unwrap(),
+            hops: vec![
+                hop(1, Some("10.0.0.254")),
+                hop(2, None),
+                hop(3, Some("198.51.100.1")),
+            ],
+            reached: true,
+            rtt: Some(Duration::from_millis(20)),
+        };
+        let doc = MapDoc::from_hosts(
+            &hosts,
+            Some(ip("10.0.0.1")),
+            Some(ip("10.0.0.254")),
+            &[path],
+            Scan::default(),
+        );
+        assert_eq!(
+            ids(&doc),
+            ["10.0.0.1", "10.0.0.254", "203.0.113.9", "198.51.100.1"],
+            "the router the scan did not list is added"
+        );
+        assert_eq!(role_of(&doc, "198.51.100.1"), Role::Router);
+        assert_eq!(role_of(&doc, "10.0.0.254"), Role::Gateway, "gateway first");
+        let links: Vec<(&str, &str, Option<&str>)> = doc
+            .links
+            .iter()
+            .map(|l| (l.source.as_str(), l.target.as_str(), l.kind.as_deref()))
+            .collect();
+        assert_eq!(
+            links,
+            [
+                ("10.0.0.1", "10.0.0.254", Some("subnet")),
+                ("10.0.0.254", "198.51.100.1", Some("route")),
+                ("198.51.100.1", "203.0.113.9", Some("route")),
+            ]
+        );
+        // The host hangs off the router, which hangs off the gateway.
+        let far = doc.hosts[2].position.unwrap();
+        let router = doc.hosts[3].position.unwrap();
+        assert!(
+            far[0] > router[0] && router[0] > layout::MIN_RADIUS,
+            "{far:?} {router:?}"
+        );
+
+        // A path that found nothing leaves the guess in place.
+        let silent = Path {
+            target: "203.0.113.9".parse().unwrap(),
+            hops: vec![hop(1, None), hop(2, None)],
+            reached: false,
+            rtt: None,
+        };
+        let doc = MapDoc::from_hosts(
+            &hosts,
+            Some(ip("10.0.0.1")),
+            Some(ip("10.0.0.254")),
+            &[silent],
+            Scan::default(),
+        );
+        assert_eq!(ids(&doc), ["10.0.0.1", "10.0.0.254", "203.0.113.9"]);
+        assert_eq!(doc.links[1].source, "10.0.0.254");
+        assert_eq!(doc.links[1].kind.as_deref(), Some("route"));
     }
 
     #[test]
@@ -685,7 +825,7 @@ mod tests {
         let mut hosts = scanned(&["10.0.0.2", "10.0.0.2"]);
         hosts[0].hostname = Some("first".into());
         hosts[1].hostname = Some("second".into());
-        let doc = MapDoc::from_hosts(&hosts, None, None, Scan::default());
+        let doc = MapDoc::from_hosts(&hosts, None, None, &[], Scan::default());
         assert_eq!(ids(&doc), ["10.0.0.2"]);
         assert_eq!(doc.hosts[0].display_label(), "first");
     }
@@ -698,6 +838,7 @@ mod tests {
             number: 22,
             proto: scanner::Proto::Tcp,
             service: Some("ssh".into()),
+            state: None,
         });
         let scan = Scan {
             kind: Some("ping_sweep".into()),
@@ -705,7 +846,7 @@ mod tests {
             stage: Some("done".into()),
             ..Scan::default()
         };
-        let doc = MapDoc::from_hosts(&hosts, None, None, scan);
+        let doc = MapDoc::from_hosts(&hosts, None, None, &[], scan);
         let json = serde_json::to_value(&doc.hosts[0]).unwrap();
         let keys: Vec<&String> = json.as_object().unwrap().keys().collect();
         assert_eq!(
@@ -762,6 +903,7 @@ mod tests {
             &[],
             Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             None,
+            &[],
             Scan::default(),
         );
         assert!(doc.generated_at.is_some_and(|t| t.ends_with("+00:00")));

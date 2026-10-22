@@ -11,6 +11,7 @@ use crate::graph::{ColorKey, Graph, LABEL_GAP, Node};
 use crate::map::Role;
 use crate::panel::{card, draw_sidebar};
 use crate::picking::Picker;
+use crate::scanpanel::draw_scan_card;
 use crate::scene::{MainCamera, SceneSettings, smoothstep};
 use crate::theme;
 
@@ -26,8 +27,8 @@ const MIN_LABEL_OPACITY: f32 = 0.01;
 /// A label whose anchor is further than this (logical pixels) outside the
 /// viewport cannot reach into it, and is not laid out at all.
 const LABEL_CULL_MARGIN: f32 = 240.0;
-/// The HUD and the legend sit 12 px from the window edges.
-const EDGE: f32 = 12.0;
+/// The HUD, the scan card and the legend sit 12 px from the window edges.
+pub const EDGE: f32 = 12.0;
 
 /// What egui wants this frame, so the 3D controls and picking stay out of its
 /// way.
@@ -49,7 +50,7 @@ pub struct Status {
 
 impl Default for Status {
     fn default() -> Self {
-        Status::message("no scan yet · start one with --scan")
+        Status::message("no scan yet · press Scan, or start with --scan")
     }
 }
 
@@ -60,6 +61,10 @@ impl Status {
             text: text.to_string(),
             error: false,
         }
+    }
+
+    pub fn show_message(&mut self, text: &str) {
+        *self = Status::message(text);
     }
 
     /// A new map arrived: show its summary.
@@ -94,6 +99,7 @@ impl Plugin for UiPlugin {
                 (
                     apply_style,
                     draw_hud,
+                    draw_scan_card,
                     draw_legend,
                     draw_sidebar,
                     draw_help,
@@ -113,6 +119,7 @@ pub fn role_color(role: Role) -> Color {
     match role {
         Role::Scanner => theme::ROLE_SCANNER,
         Role::Gateway => theme::ROLE_GATEWAY,
+        Role::Router => theme::ROLE_ROUTER,
         Role::Host => theme::ROLE_HOST,
     }
 }
@@ -285,7 +292,7 @@ fn draw_legend(mut contexts: EguiContexts) -> Result {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
-                        for (i, role) in [Role::Scanner, Role::Gateway, Role::Host]
+                        for (i, role) in [Role::Scanner, Role::Gateway, Role::Router, Role::Host]
                             .into_iter()
                             .enumerate()
                         {
@@ -413,6 +420,7 @@ impl LabelStyle {
         let text = match key {
             ColorKey::Scanner => theme::ROLE_SCANNER,
             ColorKey::Gateway => theme::ROLE_GATEWAY,
+            ColorKey::Router => theme::ROLE_ROUTER,
             ColorKey::Down => theme::ROLE_DOWN,
             ColorKey::Host => theme::TEXT,
         };
@@ -644,7 +652,10 @@ mod tests {
     #[test]
     fn the_status_line_shows_a_message_a_map_or_an_error() {
         let mut status = Status::default();
-        assert_eq!(status.text, "no scan yet · start one with --scan");
+        assert_eq!(
+            status.text,
+            "no scan yet · press Scan, or start with --scan"
+        );
         status.show_error("scan failed: boom".into());
         assert!(status.error);
         status.show_map("ping_sweep · done · 3 hosts · rev 4".into());

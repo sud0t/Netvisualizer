@@ -6,6 +6,7 @@
 //! - sweep.rs: the ping sweep, finding which addresses answer.
 //! - arp.rs: the ARP sweep, finding every host on our own link, MACs included.
 //! - neighbours.rs: the kernel's ARP table, the MACs of the hosts found.
+//! - trace.rs: traceroute, the routers on the way to hosts beyond our link.
 //! - names.rs: reverse DNS, naming the hosts found.
 //! - ports.rs: the TCP connect scan, service names, port lists.
 //!
@@ -21,6 +22,7 @@ pub mod names;
 pub mod neighbours;
 pub mod ports;
 pub mod sweep;
+pub mod trace;
 
 // The network type the scanner's API speaks, so its users need no ipnet of their own.
 pub use ipnet::Ipv4Net;

@@ -24,11 +24,13 @@ pub const HIGHLIGHT_SCALE: f32 = 1.12;
 const SPHERE_SECTORS: u32 = 32;
 const SPHERE_STACKS: u32 = 20;
 
-/// Sphere radius per role: the scanner is the biggest, then the gateway.
+/// Sphere radius per role: the scanner is the biggest, then the gateway
+/// and the routers.
 pub fn node_radius(role: Role) -> f32 {
     match role {
         Role::Scanner => 1.1,
         Role::Gateway => 0.85,
+        Role::Router => 0.75,
         Role::Host => 0.6,
     }
 }
@@ -38,6 +40,7 @@ pub fn node_radius(role: Role) -> f32 {
 pub enum ColorKey {
     Scanner,
     Gateway,
+    Router,
     Host,
     Down,
 }
@@ -48,6 +51,7 @@ impl ColorKey {
             (Status::Down, _) => ColorKey::Down,
             (_, Role::Scanner) => ColorKey::Scanner,
             (_, Role::Gateway) => ColorKey::Gateway,
+            (_, Role::Router) => ColorKey::Router,
             (_, Role::Host) => ColorKey::Host,
         }
     }
@@ -56,14 +60,16 @@ impl ColorKey {
         match self {
             ColorKey::Scanner => theme::ROLE_SCANNER,
             ColorKey::Gateway => theme::ROLE_GATEWAY,
+            ColorKey::Router => theme::ROLE_ROUTER,
             ColorKey::Host => theme::ROLE_HOST,
             ColorKey::Down => theme::ROLE_DOWN,
         }
     }
 
-    const ALL: [ColorKey; 4] = [
+    const ALL: [ColorKey; 5] = [
         ColorKey::Scanner,
         ColorKey::Gateway,
+        ColorKey::Router,
         ColorKey::Host,
         ColorKey::Down,
     ];

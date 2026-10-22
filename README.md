@@ -4,11 +4,12 @@ Finds the hosts on your network and shows them as a 3D map in its own window.
 
 An ARP sweep (with the right privilege, see below) or a ping sweep finds
 the hosts, their MAC addresses and the IEEE's vendor list say who made
-them, reverse DNS names them, and an optional TCP connect scan lists their
-open ports. It is one Rust program: the scanner builds its own ARP requests
-and ICMP echo requests and sends them on raw sockets, and the map is drawn
-with Bevy: fly around with the keyboard and mouse, click a host for its
-details.
+them, traceroute finds the routers on the way to hosts beyond your own
+subnet, reverse DNS names them all, and optional TCP and UDP port scans
+list their open ports. It is one Rust program: the scanner builds its own ARP
+requests and ICMP echo requests and sends them on raw sockets, and the map
+is drawn with Bevy: fly around with the keyboard and mouse, click a host
+for its details.
 
 ## Build (once)
 
@@ -38,22 +39,27 @@ uv venv --python 3.15 --seed .venv
 ## Run
 
 ```sh
-netvisualizer                                   # the window; nothing is scanned
+netvisualizer                                   # the window; press Scan there (nothing is scanned until then)
 netvisualizer --scan                            # sweep the subnet of the interface with the default route
 netvisualizer --scan 192.168.1.0/24             # this network instead
 netvisualizer --scan --ports                    # then try common TCP ports on the hosts that answered
 netvisualizer --scan --ports 22,80,8000-8010
+netvisualizer --scan --udp                      # and common UDP ports (53/udp? means silent: open or filtered)
 netvisualizer --scan --no-arp                   # ping only, even when ARP is allowed
+netvisualizer --scan 1.1.1.1                    # one far host: the routers on the way become nodes
+netvisualizer --scan 10.0.0.0/24 --no-trace     # without the traceroute to hosts beyond your subnet
 netvisualizer --scan --save last.json           # keep the result; --json last.json shows it again
 netvisualizer --scan --no-window                # scan and print the hosts, no window
 netvisualizer --list-interfaces                 # which networks this machine is on
 netvisualizer --help                            # everything else
 ```
 
-Nothing touches the network without `--scan` (a Scan button comes with the UI
-work). The window opens straight away and the map redraws as each stage of
-the scan finishes; closing the window ends the program. To try it without
-scanning, show the saved fake LAN: `netvisualizer --json viewer/tests/fixtures/demo.json`.
+Nothing touches the network without `--scan` or the Scan button in the
+window's top-left card, which takes the same options (open "options") and
+turns into the stage, a progress bar and Cancel while a scan runs. The window
+opens straight away and the map redraws as each stage of the scan finishes;
+closing the window ends the program. To try it without scanning, show the
+saved fake LAN: `netvisualizer --json viewer/tests/fixtures/demo.json`.
 
 ### Privileges
 

@@ -27,20 +27,22 @@ use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
-use scanner::Ipv4Net;
 use scanner::arp::PacketSocket;
 use scanner::local::{self, LocalNetwork, LocalNetworkError};
 use scanner::names;
 use scanner::neighbours;
 use scanner::ports::{self, PortScanOptions};
 use scanner::sweep::{self, SweepOptions};
+use scanner::trace::{self, Path, TraceOptions};
+use scanner::{Ipv4Net, Proto};
 use serde_json::Value;
+use tokio::sync::Notify;
 
 use crate::ViewerSet;
 use crate::graph::MapDocument;
@@ -63,11 +65,16 @@ pub struct ScanSettings {
     /// TCP ports to try on every host once the sweep is done; empty skips
     /// the port scan.
     pub ports: Vec<u16>,
+    /// UDP ports to probe after the TCP ones; empty skips it.
+    pub udp_ports: Vec<u16>,
     /// Look the hosts' names up with reverse DNS.
     pub names: bool,
     /// Sweep the part of the network on our own link with ARP when a packet
     /// socket can be opened (root or `CAP_NET_RAW`); off means ping only.
     pub arp: bool,
+    /// Trace the route to the hosts beyond our own subnet: the routers on
+    /// the way become hosts of the map, and the links follow the path.
+    pub trace: bool,
     /// How long each ping or connection may take, and how long the ARP
     /// sweep listens after its last request.
     pub timeout: Duration,
@@ -83,8 +90,10 @@ impl Default for ScanSettings {
             network: None,
             interface: None,
             ports: Vec::new(),
+            udp_ports: Vec::new(),
             names: true,
             arp: true,
+            trace: true,
             timeout: Duration::from_secs(1),
             concurrency: 254,
             save: None,
@@ -142,8 +151,8 @@ impl ScanPlan {
 }
 
 /// Start a scan with the current [`ScanSettings`]. `--scan` sends one at
-/// start-up; the Scan button (Milestone 10) will send the same. Ignored
-/// while a scan is running.
+/// start-up and the Scan button sends the same. Ignored while a scan is
+/// running.
 #[derive(Message, Debug, Clone, Copy, Default)]
 pub struct StartScan;
 
@@ -157,14 +166,20 @@ pub enum ScanEvent {
     Progress { done: usize, total: usize },
     /// A line worth telling the user: who answered, a fallback, a saved file.
     Note(String),
-    /// The scan is over; `Err` says why it stopped early. Always the last event.
+    /// The scan is over; `Err` says why it stopped early. The last event,
+    /// unless the scan was cancelled.
     Finished(Result<(), String>),
+    /// The scan was cancelled; the maps sent so far stand. The last event.
+    Cancelled,
 }
 
 /// Start a scan on its own thread. The thread ends after sending
-/// [`ScanEvent::Finished`], or as soon as nobody listens any more.
-pub fn spawn(plan: ScanPlan) -> Receiver<ScanEvent> {
+/// [`ScanEvent::Finished`] or [`ScanEvent::Cancelled`], or as soon as
+/// nobody listens any more. Notifying the handle cancels the scan.
+pub fn spawn(plan: ScanPlan) -> (Receiver<ScanEvent>, Arc<Notify>) {
     let (tx, rx) = mpsc::channel();
+    let cancel = Arc::new(Notify::new());
+    let stop = Arc::clone(&cancel);
     thread::Builder::new()
         .name("netvisualizer-scan".into())
         .spawn(move || {
@@ -173,14 +188,25 @@ pub fn spawn(plan: ScanPlan) -> Receiver<ScanEvent> {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build();
-            let result = match runtime {
-                Ok(runtime) => runtime.block_on(run(&plan, &tx)),
-                Err(err) => Err(format!("could not start the scan's runtime: {err}")),
+            let outcome = match runtime {
+                // Cancelling drops the stages' future, and every probe in
+                // flight, its socket included, goes with it.
+                Ok(runtime) => runtime.block_on(async {
+                    tokio::select! {
+                        result = run(&plan, &tx) => Some(result),
+                        () = stop.notified() => None,
+                    }
+                }),
+                Err(err) => Some(Err(format!("could not start the scan's runtime: {err}"))),
             };
-            let _ = tx.send(ScanEvent::Finished(result)); // fails only if the viewer quit
+            let last = match outcome {
+                Some(result) => ScanEvent::Finished(result),
+                None => ScanEvent::Cancelled,
+            };
+            let _ = tx.send(last); // fails only if the viewer quit
         })
         .expect("could not start the scan thread");
-    rx
+    (rx, cancel)
 }
 
 /// The stages, in order (see the module comment).
@@ -268,6 +294,56 @@ async fn run(plan: &ScanPlan, tx: &Sender<ScanEvent>) -> Result<(), String> {
     keep_gateway(&mut hosts, plan.local.gateway, &plan.network, probe);
     local::mark_local(&mut hosts, &plan.local.network);
 
+    // Hosts beyond our link: which routers do the packets pass on the way?
+    // Those routers become hosts too (so they get names like anyone), and
+    // the map draws each path instead of guessing "behind the gateway".
+    let remote: Vec<Ipv4Addr> = hosts
+        .iter()
+        .filter(|h| h.is_local == Some(false))
+        .filter_map(|h| match h.ip {
+            IpAddr::V4(ip) => Some(ip),
+            IpAddr::V6(_) => None,
+        })
+        .collect();
+    if settings.trace && !remote.is_empty() {
+        report.map(
+            &hosts,
+            &format!("tracing the way to {} hosts…", remote.len()),
+        );
+        let options = TraceOptions {
+            max_hops: trace::DEFAULT_MAX_HOPS,
+            timeout: settings.timeout,
+        };
+        match trace::trace_paths(&remote, &options, settings.concurrency, progress(tx)).await {
+            Ok(paths) => {
+                let mut routers = 0;
+                for path in &paths {
+                    for router in path.routers() {
+                        if !hosts.iter().any(|h| h.ip == IpAddr::V4(router)) {
+                            hosts.push(scanner::Host::new(router));
+                            routers += 1;
+                        }
+                    }
+                    if let Some(host) = hosts.iter_mut().find(|h| h.ip == IpAddr::V4(path.target)) {
+                        host.extra.insert("path".into(), path.describe().into());
+                        if let Some(rtt) = path.rtt {
+                            let millis = (rtt.as_secs_f64() * 10_000.0).round() / 10.0;
+                            host.extra.insert("latency_ms".into(), millis.into());
+                        }
+                    }
+                }
+                local::mark_local(&mut hosts, &plan.local.network); // the routers too
+                let reached = paths.iter().filter(|p| p.reached).count();
+                report.note(format!(
+                    "{reached} of {} ways traced, {routers} routers found",
+                    remote.len()
+                ));
+                report.paths = paths;
+            }
+            Err(err) => report.note(format!("traceroute skipped: {err}")),
+        }
+    }
+
     // The ARP sweep's hosts carry their MACs; for the ping sweep's, the pings
     // made the kernel ARP for every address on our link that answered, so
     // its table has them now. A loopback or remote-only scan has none, and
@@ -316,6 +392,29 @@ async fn run(plan: &ScanPlan, tx: &Sender<ScanEvent>) -> Result<(), String> {
         let open: usize = hosts.iter().map(|h| h.open_ports.len()).sum();
         report.note(format!(
             "{open} open ports on {} hosts ({count} ports tried each)",
+            hosts.len()
+        ));
+    }
+
+    if !settings.udp_ports.is_empty() {
+        let count = settings.udp_ports.len();
+        report.map(&hosts, &format!("trying {count} UDP ports…"));
+        let options = PortScanOptions {
+            timeout: settings.timeout,
+            concurrency: settings.concurrency,
+        };
+        ports::udp_port_scan(&mut hosts, &settings.udp_ports, &options, progress(tx)).await;
+        let udp = hosts
+            .iter()
+            .flat_map(|h| &h.open_ports)
+            .filter(|p| p.proto == Proto::Udp);
+        let answered = udp
+            .clone()
+            .filter(|p| p.state.as_deref() == Some("open"))
+            .count();
+        let silent = udp.count() - answered;
+        report.note(format!(
+            "{answered} UDP ports answered and {silent} stayed silent (open or filtered) on {} hosts ({count} ports tried each)",
             hosts.len()
         ));
     }
@@ -371,6 +470,8 @@ struct Reporter<'a> {
     revision: u64,
     /// The maps' `scan.type`: which sweep finds the hosts.
     kind: &'static str,
+    /// The ways to the hosts beyond our link, once traced.
+    paths: Vec<Path>,
 }
 
 impl<'a> Reporter<'a> {
@@ -380,6 +481,7 @@ impl<'a> Reporter<'a> {
             tx,
             revision: 0,
             kind: "ping_sweep",
+            paths: Vec::new(),
         }
     }
 
@@ -396,6 +498,7 @@ impl<'a> Reporter<'a> {
             hosts,
             Some(IpAddr::V4(self.plan.local.ip)),
             self.plan.local.gateway.map(IpAddr::V4),
+            &self.paths,
             scan,
         );
         doc.revision = self.revision;
@@ -439,14 +542,33 @@ impl Plugin for ScanPlugin {
     }
 }
 
-/// The running scan's reports. Exists only while a scan runs (`Receiver` is
-/// not `Sync`, hence the mutex).
+/// The running scan: its reports, how to stop it, and where it stands for
+/// the scan card. Exists only while a scan runs. (`Receiver` is not `Sync`,
+/// hence the mutex; nothing ever waits on it.)
 #[derive(Resource)]
-pub struct ScanJob(Mutex<Receiver<ScanEvent>>);
+pub struct ScanJob {
+    events: Mutex<Receiver<ScanEvent>>,
+    cancel: Arc<Notify>,
+    /// What the scan is doing now, from its latest map.
+    pub stage: String,
+    /// `done` of `total` steps of the running stage, when it counts any.
+    pub progress: Option<(usize, usize)>,
+}
 
 impl ScanJob {
-    pub fn new(events: Receiver<ScanEvent>) -> ScanJob {
-        ScanJob(Mutex::new(events))
+    pub fn new(events: Receiver<ScanEvent>, cancel: Arc<Notify>) -> ScanJob {
+        ScanJob {
+            events: Mutex::new(events),
+            cancel,
+            stage: "starting…".to_string(),
+            progress: None,
+        }
+    }
+
+    /// Stop the scan: the thread gives up whatever stage it is in and
+    /// reports [`ScanEvent::Cancelled`].
+    pub fn cancel(&self) {
+        self.cancel.notify_one();
     }
 }
 
@@ -467,7 +589,8 @@ fn start_scan(
     match ScanPlan::new(&settings) {
         Ok(plan) => {
             info!("{}", plan.describe());
-            commands.insert_resource(ScanJob::new(spawn(plan)));
+            let (events, cancel) = spawn(plan);
+            commands.insert_resource(ScanJob::new(events, cancel));
         }
         Err(err) => {
             error!("cannot scan: {err}");
@@ -480,15 +603,16 @@ fn start_scan(
 /// graph.rs rebuild, the panel re-sort and scene.rs re-frame (while the user
 /// has not moved the camera); the selection survives, being kept by host id.
 fn receive(
-    job: Option<Res<ScanJob>>,
+    job: Option<ResMut<ScanJob>>,
     mut doc: ResMut<MapDocument>,
     mut status: ResMut<Status>,
     mut commands: Commands,
 ) {
-    let Some(job) = job else {
+    let Some(mut job) = job else {
         return;
     };
-    let Ok(events) = job.0.lock() else {
+    let job = &mut *job;
+    let Ok(events) = job.events.get_mut() else {
         return;
     };
     loop {
@@ -496,11 +620,13 @@ fn receive(
             Ok(ScanEvent::Map(map)) => {
                 if let Some(stage) = &map.scan.stage {
                     info!("{stage}");
+                    job.stage.clone_from(stage);
                 }
+                job.progress = None;
                 status.show_map(map.summary());
                 doc.0 = Some(*map);
             }
-            Ok(ScanEvent::Progress { .. }) => {} // the HUD shows no progress yet (Milestone 10)
+            Ok(ScanEvent::Progress { done, total }) => job.progress = Some((done, total)),
             Ok(ScanEvent::Note(note)) => info!("{note}"),
             Ok(ScanEvent::Finished(result)) => {
                 if let Err(err) = result {
@@ -509,6 +635,12 @@ fn receive(
                 }
                 commands.remove_resource::<ScanJob>();
                 return; // the last event: the thread is gone or going
+            }
+            Ok(ScanEvent::Cancelled) => {
+                info!("scan cancelled");
+                status.show_message("scan cancelled");
+                commands.remove_resource::<ScanJob>();
+                return;
             }
             Err(TryRecvError::Empty) => return,
             // The thread died without a last word (a panic, which the log
@@ -535,7 +667,8 @@ pub fn run_headless(plan: ScanPlan) -> ExitCode {
     let mut last_progress = Instant::now();
     let mut last_map = None;
     let mut finished = false;
-    for event in spawn(plan) {
+    let (events, _cancel) = spawn(plan); // nothing cancels a headless scan but Ctrl-C
+    for event in events {
         match event {
             ScanEvent::Map(map) => {
                 let new_stage = map.scan.stage.clone().unwrap_or_default();
@@ -559,6 +692,10 @@ pub fn run_headless(plan: ScanPlan) -> ExitCode {
                 return ExitCode::FAILURE;
             }
             ScanEvent::Finished(Ok(())) => finished = true,
+            ScanEvent::Cancelled => {
+                eprintln!("netvisualizer: the scan was cancelled");
+                return ExitCode::FAILURE;
+            }
         }
     }
     if !finished {
@@ -596,9 +733,15 @@ fn host_table(map: &MapDoc) -> Vec<String> {
                 .map(|port| {
                     let number = &port["number"];
                     let proto = port["proto"].as_str().unwrap_or("?");
+                    // "53/udp?": the port stayed silent, so open or filtered.
+                    let unsure = if port["state"].as_str() == Some("open|filtered") {
+                        "?"
+                    } else {
+                        ""
+                    };
                     match port["service"].as_str() {
-                        Some(service) => format!("{number}/{proto} {service}"),
-                        None => format!("{number}/{proto}"),
+                        Some(service) => format!("{number}/{proto}{unsure} {service}"),
+                        None => format!("{number}/{proto}{unsure}"),
                     }
                 })
                 .collect();
@@ -651,7 +794,24 @@ mod tests {
     }
 
     fn all_events(plan: ScanPlan) -> Vec<ScanEvent> {
-        spawn(plan).into_iter().collect()
+        spawn(plan).0.into_iter().collect()
+    }
+
+    /// A scan that would wait 5 s for silence is cut short by a cancel.
+    #[test]
+    fn a_cancelled_scan_stops_early_and_says_so() {
+        let mut plan = documentation_plan("192.0.2.0/28");
+        plan.settings.timeout = Duration::from_secs(5);
+        let started = Instant::now();
+        let (events, cancel) = spawn(plan);
+        thread::sleep(Duration::from_millis(200));
+        cancel.notify_one();
+        let events: Vec<ScanEvent> = events.into_iter().collect();
+        assert!(
+            matches!(events.last(), Some(ScanEvent::Cancelled)),
+            "{events:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
     }
 
     fn maps(events: &[ScanEvent]) -> Vec<&MapDoc> {
@@ -735,12 +895,13 @@ mod tests {
     }
 
     /// A scan "from" 192.0.2.10 on 192.0.2.0/24, a network reserved for
-    /// documentation where nothing ever answers; ping only.
+    /// documentation where nothing ever answers; ping only, no traceroute.
     fn documentation_plan(network: &str) -> ScanPlan {
         let settings = ScanSettings {
             network: Some(network.parse().unwrap()),
             names: false,
             arp: false,
+            trace: false,
             timeout: Duration::from_millis(300),
             ..ScanSettings::default()
         };
@@ -825,6 +986,82 @@ mod tests {
         assert_eq!(gateway.fields["is_local"], true);
     }
 
+    /// A UDP port bound on 127.0.0.1 that never answers: listed for that
+    /// host as open|filtered, and not at all for 127.0.0.2, which refuses.
+    #[test]
+    fn udp_ports_are_tried_after_tcp() {
+        let quiet = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = quiet.local_addr().unwrap().port();
+        let mut plan = loopback_plan(Vec::new());
+        plan.settings.udp_ports = vec![port];
+        let events = all_events(plan);
+        let maps = maps(&events);
+        let stages: Vec<&str> = maps
+            .iter()
+            .filter_map(|m| m.scan.stage.as_deref())
+            .collect();
+        assert!(stages.contains(&"trying 1 UDP ports…"), "{stages:?}");
+        let done = *maps.last().unwrap();
+        let ports = &done.hosts[0].fields["open_ports"];
+        assert_eq!(ports[0]["number"], port);
+        assert_eq!(ports[0]["proto"], "udp");
+        assert_eq!(ports[0]["state"], "open|filtered");
+        assert_eq!(done.hosts[1].fields["open_ports"], serde_json::json!([]));
+        let table = host_table(done);
+        assert!(table[0].ends_with(&format!("{port}/udp?")), "{}", table[0]);
+        drop(quiet);
+    }
+
+    /// With traceroute on, the loopback hosts turn out to be reached with
+    /// no router in between, so they hang off the scanner, not the gateway.
+    #[test]
+    fn a_traced_way_replaces_the_guess_through_the_gateway() {
+        let mut plan = documentation_plan("127.0.0.0/30");
+        plan.settings.trace = true;
+        let events = all_events(plan);
+        let maps = maps(&events);
+        let stages: Vec<&str> = maps
+            .iter()
+            .filter_map(|m| m.scan.stage.as_deref())
+            .collect();
+        assert_eq!(
+            stages,
+            [
+                "sweeping 127.0.0.0/30…",
+                "tracing the way to 2 hosts…",
+                "done"
+            ]
+        );
+        let done = *maps.last().unwrap();
+        let links: Vec<(&str, &str, Option<&str>)> = done
+            .links
+            .iter()
+            .map(|l| (l.source.as_str(), l.target.as_str(), l.kind.as_deref()))
+            .collect();
+        assert_eq!(
+            links,
+            [
+                ("192.0.2.10", "192.0.2.1", Some("subnet")),
+                ("192.0.2.10", "127.0.0.1", Some("route")),
+                ("192.0.2.10", "127.0.0.2", Some("route")),
+            ]
+        );
+        let host = done.hosts.iter().find(|h| h.id == "127.0.0.1").unwrap();
+        assert_eq!(host.fields["extra"]["path"], serde_json::json!([]));
+        assert!(host.fields["extra"]["latency_ms"].is_number(), "{host:?}");
+        let notes: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                ScanEvent::Note(n) => Some(n.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            notes.contains(&"2 of 2 ways traced, 0 routers found"),
+            "{notes:?}"
+        );
+    }
+
     #[test]
     fn arp_covers_the_part_of_the_network_on_our_link() {
         let link = |network: &str| documentation_plan(network).link_network();
@@ -898,7 +1135,7 @@ mod tests {
     fn maps_from_the_scan_replace_the_document_and_the_job_ends_with_the_scan() {
         let mut app = app();
         let (tx, rx) = mpsc::channel();
-        app.insert_resource(ScanJob::new(rx));
+        app.insert_resource(ScanJob::new(rx, Arc::new(Notify::new())));
         let mut map = MapDoc::from_json(
             r#"{"revision": 2, "scan": {"type": "ping_sweep", "stage": "resolving names…"}}"#,
         )
@@ -909,6 +1146,7 @@ mod tests {
         tx.send(ScanEvent::Map(Box::new(map))).unwrap();
         tx.send(ScanEvent::Note("27 of 27 addresses answered".into()))
             .unwrap();
+        tx.send(ScanEvent::Progress { done: 3, total: 27 }).unwrap();
         app.update();
 
         let doc = app.world().resource::<MapDocument>();
@@ -918,7 +1156,9 @@ mod tests {
             status.text,
             "ping_sweep · resolving names… · 27 hosts · 0 links · rev 2"
         );
-        assert!(app.world().contains_resource::<ScanJob>(), "still running");
+        let job = app.world().resource::<ScanJob>();
+        assert_eq!(job.stage, "resolving names…");
+        assert_eq!(job.progress, Some((3, 27)));
 
         tx.send(ScanEvent::Finished(Err("the sweep failed: boom".into())))
             .unwrap();
@@ -932,10 +1172,23 @@ mod tests {
     /// The scan thread died without sending `Finished` (a panic): the job
     /// must not stay "running" for ever.
     #[test]
+    fn a_cancelled_job_ends_without_an_error() {
+        let mut app = app();
+        let (tx, rx) = mpsc::channel();
+        app.insert_resource(ScanJob::new(rx, Arc::new(Notify::new())));
+        tx.send(ScanEvent::Cancelled).unwrap();
+        app.update();
+        let status = app.world().resource::<Status>();
+        assert!(!status.error);
+        assert_eq!(status.text, "scan cancelled");
+        assert!(!app.world().contains_resource::<ScanJob>());
+    }
+
+    #[test]
     fn a_scan_thread_that_dies_ends_the_job_with_an_error() {
         let mut app = app();
         let (tx, rx) = mpsc::channel();
-        app.insert_resource(ScanJob::new(rx));
+        app.insert_resource(ScanJob::new(rx, Arc::new(Notify::new())));
         tx.send(ScanEvent::Note("sweeping".into())).unwrap();
         app.update();
         assert!(app.world().contains_resource::<ScanJob>(), "still running");

@@ -11,6 +11,7 @@ pub const SELECTION: Color = Color::WHITE;
 
 pub const ROLE_SCANNER: Color = Color::srgb_u8(0x22, 0xd3, 0xee);
 pub const ROLE_GATEWAY: Color = Color::srgb_u8(0xf5, 0x9e, 0x0b);
+pub const ROLE_ROUTER: Color = Color::srgb_u8(0xc0, 0x84, 0xfc);
 pub const ROLE_HOST: Color = Color::srgb_u8(0x60, 0xa5, 0xfa);
 pub const ROLE_DOWN: Color = Color::srgb_u8(0x6b, 0x72, 0x80);
 

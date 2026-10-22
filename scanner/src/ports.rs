@@ -1,5 +1,5 @@
-//! Open ports: the TCP connect scan, the names of well-known ports, and port
-//! lists the way people type them ("22,80,8000-8010").
+//! Open ports: the TCP connect scan, the UDP probe, the names of well-known
+//! ports, and port lists the way people type them ("22,80,8000-8010").
 //!
 //! A connect scan completes the TCP handshake (SYN, SYN-ACK, ACK) the way any
 //! client would, so it needs no privileges, at the cost of being visible to
@@ -7,13 +7,21 @@
 //! ("connection refused"); a filtered one stays silent until the timeout.
 //! Only the first counts as open. (A SYN scan, which never finishes the
 //! handshake, would need a raw socket.)
+//!
+//! UDP has no handshake, so a probe is a datagram and the answer, if any,
+//! is up to the service. What a closed port does is the kernel's doing: it
+//! sends back an ICMP "port unreachable", which the kernel on our side turns
+//! into "connection refused" on the socket that sent the datagram, as long
+//! as that socket is connected to the address. Silence means a service
+//! that does not answer strangers, or a firewall dropping the probe: UDP
+//! cannot tell those apart, so such a port is "open|filtered".
 
 use std::collections::{BTreeSet, HashMap};
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
@@ -25,6 +33,12 @@ pub const COMMON_TCP_PORTS: [u16; 44] = [
     636, 993, 995, 1433, 1521, 1883, 2049, 3000, 3306, 3389, 5000, 5060, 5432, 5900, 6379, 8000,
     8080, 8443, 8883, 8888, 9000, 9090, 9100, 27017,
 ];
+
+/// UDP ports worth trying when nobody gives a list: the services a LAN
+/// runs over UDP (DNS, DHCP, TFTP, RPC, NTP, NetBIOS, SNMP, IPsec, syslog,
+/// SSDP, SIP, mDNS).
+pub const COMMON_UDP_PORTS: [u16; 12] =
+    [53, 67, 69, 111, 123, 137, 161, 500, 514, 1900, 5060, 5353];
 
 /// How patient the scan is, and how many connections it keeps open at once.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -89,6 +103,7 @@ pub async fn tcp_port_scan(
                 number,
                 proto: Proto::Tcp,
                 service: service_name(number, Proto::Tcp),
+                state: Some("open".to_string()),
             });
         }
     }
@@ -104,6 +119,117 @@ pub async fn tcp_connect(address: SocketAddr, timeout: Duration) -> bool {
         tokio::time::timeout(timeout, TcpStream::connect(address)).await,
         Ok(Ok(_))
     )
+}
+
+/// What a UDP probe learned about a port (see the module comment).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UdpState {
+    /// Something answered: a service is listening.
+    Open,
+    /// Nothing came back: a service that ignores strangers, or a firewall.
+    OpenOrFiltered,
+    /// The host said "port unreachable": nothing listens there.
+    Closed,
+}
+
+impl UdpState {
+    pub fn name(self) -> &'static str {
+        match self {
+            UdpState::Open => "open",
+            UdpState::OpenOrFiltered => "open|filtered",
+            UdpState::Closed => "closed",
+        }
+    }
+}
+
+/// Send one datagram to every (host, port) pair and add the ports that did
+/// not refuse to `host.open_ports`, each with its [`UdpState`] as `state`.
+/// One host's ports are probed one after another, with `concurrency` hosts
+/// at a time: Linux sends at most about one "port unreachable" a second to
+/// one address once a short burst is spent, and two probes at once would
+/// make a closed port look silent. `progress(done, total)` is called as
+/// each host's ports are settled.
+pub async fn udp_port_scan(
+    hosts: &mut [Host],
+    ports: &[u16],
+    options: &PortScanOptions,
+    mut progress: impl FnMut(usize, usize),
+) {
+    let ports: BTreeSet<u16> = ports.iter().copied().collect();
+    let total = hosts.len() * ports.len();
+    let slots = Arc::new(Semaphore::new(options.concurrency.max(1)));
+    let mut probes = JoinSet::new();
+    for (index, host) in hosts.iter().enumerate() {
+        let ip = host.ip;
+        let ports = ports.clone();
+        let slots = Arc::clone(&slots);
+        let timeout = options.timeout;
+        probes.spawn(async move {
+            let _slot = slots
+                .acquire_owned()
+                .await
+                .expect("the semaphore is never closed");
+            let mut found = Vec::new();
+            for port in ports {
+                let state = udp_probe(SocketAddr::new(ip, port), timeout).await;
+                if state != UdpState::Closed {
+                    found.push((port, state));
+                }
+            }
+            (index, found)
+        });
+    }
+    let mut done = 0;
+    while let Some(result) = probes.join_next().await {
+        done += ports.len();
+        progress(done, total);
+        let Ok((index, found)) = result else {
+            continue;
+        };
+        let host = &mut hosts[index];
+        for (number, state) in found {
+            if !host
+                .open_ports
+                .iter()
+                .any(|p| p.number == number && p.proto == Proto::Udp)
+            {
+                host.open_ports.push(Port {
+                    number,
+                    proto: Proto::Udp,
+                    service: service_name(number, Proto::Udp),
+                    state: Some(state.name().to_string()),
+                });
+            }
+        }
+    }
+    for host in hosts {
+        host.open_ports.sort_by_key(|p| (p.proto, p.number));
+    }
+}
+
+/// One empty datagram to `address`, and what comes back within `timeout`.
+/// The socket is connected first: that is what makes the kernel hand the
+/// ICMP "port unreachable" to this socket, as a read that fails with
+/// "connection refused". Anything else that goes wrong (no route, the host
+/// gone) is not the port's doing and counts as silence.
+pub async fn udp_probe(address: SocketAddr, timeout: Duration) -> UdpState {
+    let unspecified = match address.ip() {
+        IpAddr::V4(_) => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        IpAddr::V6(_) => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+    };
+    let Ok(socket) = UdpSocket::bind((unspecified, 0)).await else {
+        return UdpState::OpenOrFiltered;
+    };
+    if socket.connect(address).await.is_err() || socket.send(&[]).await.is_err() {
+        return UdpState::OpenOrFiltered;
+    }
+    let mut buffer = [0u8; 512];
+    match tokio::time::timeout(timeout, socket.recv(&mut buffer)).await {
+        Ok(Ok(_answer)) => UdpState::Open,
+        Ok(Err(err)) if err.kind() == std::io::ErrorKind::ConnectionRefused => UdpState::Closed,
+        // Some other error (not the port's doing), or the time ran out.
+        Ok(Err(_)) | Err(_) => UdpState::OpenOrFiltered,
+    }
 }
 
 /// The well-known name of a port ("ssh" for 22/tcp) from the system's
@@ -206,6 +332,7 @@ mod tests {
             number: 1,
             proto: Proto::Udp,
             service: None,
+            state: None,
         });
         let options = PortScanOptions {
             timeout: Duration::from_millis(500),
@@ -242,6 +369,63 @@ mod tests {
         let (_held, closed) = closed_port();
         let refused = SocketAddr::from((Ipv4Addr::LOCALHOST, closed));
         assert!(!tcp_connect(refused, timeout).await);
+    }
+
+    /// Three UDP ports on this machine: one that answers, one that stays
+    /// quiet, one nobody is on.
+    #[tokio::test]
+    async fn udp_ports_answer_stay_silent_or_refuse() {
+        let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let open = echo.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let mut buffer = [0u8; 64];
+            while let Ok((len, from)) = echo.recv_from(&mut buffer).await {
+                let _ = echo.send_to(&buffer[..len], from).await;
+            }
+        });
+        let quiet = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let silent = quiet.local_addr().unwrap().port();
+        let closed = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port(); // bound, noted, let go
+        let timeout = Duration::from_millis(500);
+
+        let at = |port| SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        assert_eq!(udp_probe(at(open), timeout).await, UdpState::Open);
+        assert_eq!(
+            udp_probe(at(silent), timeout).await,
+            UdpState::OpenOrFiltered
+        );
+        assert_eq!(udp_probe(at(closed), timeout).await, UdpState::Closed);
+
+        let mut hosts = vec![Host::new(Ipv4Addr::LOCALHOST)];
+        let options = PortScanOptions {
+            timeout,
+            concurrency: 2,
+        };
+        let mut calls = Vec::new();
+        udp_port_scan(
+            &mut hosts,
+            &[closed, open, silent],
+            &options,
+            |done, total| {
+                calls.push((done, total));
+            },
+        )
+        .await;
+        assert_eq!(calls, [(3, 3)]);
+        let found: Vec<(u16, &str)> = hosts[0]
+            .open_ports
+            .iter()
+            .map(|p| (p.number, p.state.as_deref().unwrap_or("?")))
+            .collect();
+        let mut expected = vec![(open, "open"), (silent, "open|filtered")];
+        expected.sort();
+        assert_eq!(found, expected, "the closed port is not listed");
+        assert!(hosts[0].open_ports.iter().all(|p| p.proto == Proto::Udp));
+        drop(quiet);
     }
 
     #[test]

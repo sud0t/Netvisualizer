@@ -188,13 +188,14 @@ pub fn address_key(id: &str) -> String {
     }
 }
 
-/// Sort position of a role: scanner, gateway, host (which a host without
-/// a role is drawn as), then roles this viewer does not know.
+/// Sort position of a role: scanner, gateway, router, host (which a host
+/// without a role is drawn as), then roles this viewer does not know.
 fn role_order(raw_role: &str) -> u8 {
     match raw_role {
         "scanner" => 0,
         "gateway" => 1,
-        "host" | "" => 2,
+        "router" => 2,
+        "host" | "" => 3,
         _ => 9,
     }
 }
@@ -625,6 +626,7 @@ fn draw_details_header(ui: &mut egui::Ui, host: &Host, select: &mut MessageWrite
         let badge = match host.role() {
             Role::Scanner => theme::ROLE_SCANNER,
             Role::Gateway => theme::ROLE_GATEWAY,
+            Role::Router => theme::ROLE_ROUTER,
             Role::Host => theme::TEXT,
         };
         egui::Frame::new()

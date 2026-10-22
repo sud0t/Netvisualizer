@@ -25,6 +25,7 @@ mod panel;
 mod picking;
 mod python;
 mod scan;
+mod scanpanel;
 mod scene;
 mod theme;
 mod ui;
@@ -54,6 +55,7 @@ use crate::map::{CONTRACT_VERSION, MapDoc};
 use crate::panel::{Panel, PanelPlugin};
 use crate::picking::{Picker, PickingPlugin, SelectHost};
 use crate::scan::{ScanJob, ScanPlan, ScanPlugin, ScanSettings, StartScan};
+use crate::scanpanel::ScanPanelPlugin;
 use crate::scene::{ResetView, ScenePlugin};
 use crate::ui::{Help, Status, UiInput, UiPlugin};
 
@@ -94,6 +96,12 @@ struct Args {
     #[arg(long, value_name = "PORTS", num_args = 0..=1, value_parser = parse_ports, requires = "scan", help_heading = "Scanning")]
     ports: Option<Option<PortList>>,
 
+    /// Also probe these UDP ports on every host: a list like 53,123,5000-5010,
+    /// or "common" (the default). A closed port refuses; a silent one is
+    /// open or filtered, which UDP cannot tell apart.
+    #[arg(long, value_name = "PORTS", num_args = 0..=1, value_parser = parse_ports, requires = "scan", help_heading = "Scanning")]
+    udp: Option<Option<PortList>>,
+
     /// Skip the reverse DNS lookups.
     #[arg(long, requires = "scan", help_heading = "Scanning")]
     no_names: bool,
@@ -103,6 +111,11 @@ struct Args {
     /// finds hosts that ignore ping).
     #[arg(long, requires = "scan", help_heading = "Scanning")]
     no_arp: bool,
+
+    /// Skip tracing the route (the routers passed) to hosts beyond this
+    /// machine's own subnet.
+    #[arg(long, requires = "scan", help_heading = "Scanning")]
+    no_trace: bool,
 
     /// Seconds to wait for each ping or connection.
     #[arg(long, value_name = "SECONDS", default_value_t = 1.0, value_parser = parse_seconds, help_heading = "Scanning")]
@@ -168,12 +181,19 @@ impl Args {
             Some(None) => scanner::ports::COMMON_TCP_PORTS.to_vec(),
             Some(Some(PortList(ports))) => ports.clone(),
         };
+        let udp_ports = match &self.udp {
+            None => Vec::new(),
+            Some(None) => scanner::ports::COMMON_UDP_PORTS.to_vec(),
+            Some(Some(PortList(ports))) => ports.clone(),
+        };
         Some(ScanSettings {
             network,
             interface: self.interface.clone(),
             ports,
+            udp_ports,
             names: !self.no_names,
             arp: !self.no_arp,
+            trace: !self.no_trace,
             timeout: Duration::from_secs_f64(self.timeout),
             concurrency: usize::from(self.concurrency),
             save: self.save.clone(),
@@ -183,7 +203,7 @@ impl Args {
 
 /// `--scan`'s value: a network like 192.168.1.0/24 (host bits are dropped,
 /// so 192.168.1.143/24 means the same) or a single address. A /16 at most.
-fn parse_network(text: &str) -> Result<Ipv4Net, String> {
+pub fn parse_network(text: &str) -> Result<Ipv4Net, String> {
     let text = text.trim();
     let invalid = || format!("not an IPv4 network or address: {text:?}");
     let network = if text.contains('/') {
@@ -211,7 +231,7 @@ fn parse_ports(text: &str) -> Result<PortList, String> {
 }
 
 /// `--timeout`'s value: seconds, more than 0, at most an hour.
-fn parse_seconds(text: &str) -> Result<f64, String> {
+pub fn parse_seconds(text: &str) -> Result<f64, String> {
     match text.trim().parse::<f64>() {
         Ok(seconds) if seconds > 0.0 && seconds <= 3600.0 => Ok(seconds),
         _ => Err(format!(
@@ -350,6 +370,7 @@ fn main() -> ExitCode {
         PanelPlugin,
         UiPlugin,
         ScanPlugin,
+        ScanPanelPlugin,
     ))
     .insert_resource(MapDocument(doc))
     .insert_resource(status)
@@ -372,7 +393,7 @@ fn main() -> ExitCode {
         app.add_systems(Startup, log_python);
     }
     if let Some(settings) = scan {
-        // The same message the Scan button will send.
+        // The same message the Scan button sends.
         app.insert_resource(settings);
         app.world_mut().write_message(StartScan);
     }
@@ -762,6 +783,19 @@ mod tests {
         assert_eq!(s.timeout, Duration::from_millis(500));
         assert_eq!(s.concurrency, 64);
         assert_eq!(s.save, Some(PathBuf::from("s.json")));
+    }
+
+    #[test]
+    fn udp_ports_are_off_unless_asked_for() {
+        assert!(settings(&["--scan"]).udp_ports.is_empty());
+        assert_eq!(
+            settings(&["--scan", "--udp"]).udp_ports,
+            scanner::ports::COMMON_UDP_PORTS
+        );
+        assert_eq!(
+            settings(&["--scan", "--udp", "53,123"]).udp_ports,
+            [53, 123]
+        );
     }
 
     #[test]

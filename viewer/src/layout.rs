@@ -4,16 +4,16 @@
 //! - the scanner at the origin;
 //! - the hosts linked to it (its own subnet) on concentric rings around it,
 //!   the gateway first, then in address order;
-//! - the hosts linked to one of those (hosts outside the subnet, reached
-//!   through the gateway) on rings of their own around a point straight out
-//!   beyond it, outside the scanner's rings, so their links fan out away
-//!   from the middle.
+//! - the hosts linked to one of those (hosts behind the gateway, or behind
+//!   a router traceroute found) on rings of their own around a point
+//!   straight out beyond the host they hang off, outside every ring placed
+//!   before, so their links fan out away from the middle; and so on, level
+//!   by level, for as deep as the paths go.
 //!
-//! y is up; each ring floats a little higher than the one inside it. Two
-//! levels are all a sweep can tell apart; traceroute (Milestone 8) will need
-//! deeper trees. (Moved here from `graphics/layout.py`.)
+//! y is up; each ring floats a little higher than the one inside it.
+//! (Moved here from `graphics/layout.py`.)
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::f32::consts::TAU;
 use std::net::IpAddr;
 
@@ -72,22 +72,26 @@ pub fn star_ring(hosts: &[Host], links: &[Link]) -> Vec<[f32; 3]> {
     let around_centre: Vec<usize> = (0..hosts.len())
         .filter(|&i| Some(i) != centre && (parent[i].is_none() || parent[i] == centre))
         .collect();
-    let inner_reach = place_on_rings(hosts, &around_centre, [0.0; 3], &mut positions);
+    let mut placed = vec![false; hosts.len()];
+    if let Some(centre) = centre {
+        placed[centre] = true;
+    }
+    // How far out the rings placed so far reach: every group goes beyond it.
+    let mut frontier = place_on_rings(hosts, &around_centre, [0.0; 3], &mut positions);
 
-    // Everyone else, grouped by the host they hang off, in the order those
-    // groups first appear.
-    let mut groups: Vec<(usize, Vec<usize>)> = Vec::new();
-    for (i, via) in parent.iter().enumerate() {
-        let Some(via) = *via else { continue };
-        if Some(via) == centre || Some(i) == centre {
+    // Then outward, a level at a time: the hosts hanging off a placed host
+    // get rings of their own beyond it, and may have hosts of their own.
+    let mut queue: VecDeque<usize> = around_centre.iter().copied().collect();
+    for &i in &around_centre {
+        placed[i] = true;
+    }
+    while let Some(via) = queue.pop_front() {
+        let members: Vec<usize> = (0..hosts.len())
+            .filter(|&i| parent[i] == Some(via) && !placed[i])
+            .collect();
+        if members.is_empty() {
             continue;
         }
-        match groups.iter_mut().find(|(v, _)| *v == via) {
-            Some((_, members)) => members.push(i),
-            None => groups.push((via, vec![i])),
-        }
-    }
-    for (via, members) in groups {
         let [x, _, z] = positions[via];
         let out = x.hypot(z);
         let (dx, dz) = if out > 0.0 {
@@ -95,13 +99,26 @@ pub fn star_ring(hosts: &[Host], links: &[Link]) -> Vec<[f32; 3]> {
         } else {
             (1.0, 0.0)
         };
-        // Far enough out that the group's outermost ring clears the
-        // scanner's: its centre beyond both those rings and the host it
-        // hangs off, by one gap plus the group's own reach.
+        // Far enough out that the group's outermost ring clears everything
+        // placed so far and the host it hangs off, by one gap plus the
+        // group's own reach.
         let reach = MIN_RADIUS + (ring_plan(members.len()).len() - 1) as f32 * RING_GAP;
-        let distance = inner_reach.max(out) + RING_GAP + reach;
+        let distance = frontier.max(out) + RING_GAP + reach;
         let anchor = [dx * distance, 0.0, dz * distance];
         place_on_rings(hosts, &members, anchor, &mut positions);
+        frontier = distance + reach;
+        for &i in &members {
+            placed[i] = true;
+            queue.push_back(i);
+        }
+    }
+    // Hosts in a loop of links that never reaches the scanner: on a ring
+    // of their own, beyond everything.
+    let leftover: Vec<usize> = (0..hosts.len()).filter(|&i| !placed[i]).collect();
+    if !leftover.is_empty() {
+        let reach = MIN_RADIUS + (ring_plan(leftover.len()).len() - 1) as f32 * RING_GAP;
+        let anchor = [frontier + RING_GAP + reach, 0.0, 0.0];
+        place_on_rings(hosts, &leftover, anchor, &mut positions);
     }
     positions
 }
@@ -307,6 +324,63 @@ mod tests {
             let from_centre = (p[0] - centre[0]).hypot(p[2] - centre[1]);
             assert!((from_centre - MIN_RADIUS).abs() < 0.01, "{p:?}");
         }
+    }
+
+    /// scanner → gateway → router → router → host: each level further out
+    /// along the same direction, nothing overlapping.
+    #[test]
+    fn a_chain_of_routers_goes_straight_out_level_by_level() {
+        let ids = ["10.0.0.1", "10.0.0.254", "10.1.0.1", "10.2.0.1", "10.3.0.7"];
+        let map_hosts = hosts(&ids, Some("10.0.0.1"), Some("10.0.0.254"));
+        let links = [
+            link("10.0.0.1", "10.0.0.254"),
+            link("10.0.0.254", "10.1.0.1"),
+            link("10.1.0.1", "10.2.0.1"),
+            link("10.2.0.1", "10.3.0.7"),
+        ];
+        let positions = star_ring(&map_hosts, &links);
+        for pair in positions.windows(2) {
+            assert!(
+                radius(pair[1]) > radius(pair[0]) + RING_GAP - 0.01,
+                "{positions:?}"
+            );
+            assert!(
+                pair[1][2].abs() < 0.01,
+                "on the gateway's axis: {positions:?}"
+            );
+        }
+        // Two routers behind the gateway do not put their hosts on top of
+        // each other: the second group lies beyond the first.
+        let ids = [
+            "10.0.0.1",
+            "10.0.0.254",
+            "10.1.0.1",
+            "10.2.0.1",
+            "10.1.0.7",
+            "10.2.0.7",
+        ];
+        let map_hosts = hosts(&ids, Some("10.0.0.1"), Some("10.0.0.254"));
+        let links = [
+            link("10.0.0.1", "10.0.0.254"),
+            link("10.0.0.254", "10.1.0.1"),
+            link("10.0.0.254", "10.2.0.1"),
+            link("10.1.0.1", "10.1.0.7"),
+            link("10.2.0.1", "10.2.0.7"),
+        ];
+        let positions = star_ring(&map_hosts, &links);
+        for (i, a) in positions.iter().enumerate() {
+            for b in &positions[i + 1..] {
+                let apart = (a[0] - b[0]).hypot(a[2] - b[2]);
+                assert!(apart > 1.0, "{positions:?}");
+            }
+        }
+        // A loop that never reaches the scanner still gets a spot.
+        let ids = ["10.0.0.1", "10.9.0.1", "10.9.0.2"];
+        let map_hosts = hosts(&ids, Some("10.0.0.1"), None);
+        let links = [link("10.9.0.1", "10.9.0.2"), link("10.9.0.2", "10.9.0.1")];
+        let positions = star_ring(&map_hosts, &links);
+        assert_ne!(positions[1], positions[2]);
+        assert!(radius(positions[1]) > 0.0 && radius(positions[2]) > 0.0);
     }
 
     #[test]
