@@ -3,41 +3,54 @@
 Finds the hosts on your network and shows them as a 3D map in its own window.
 
 A ping sweep finds the hosts, reverse DNS names them, and an optional TCP
-connect scan lists their open ports. The map is drawn by a native viewer
-(Rust, Bevy): fly around with the keyboard and mouse, click a host for its
-details. No root needed, no Python dependencies beyond the standard library
-(scapy, if installed, is used only to read the routing table).
+connect scan lists their open ports. It is one Rust program: the scanner
+builds its own ICMP echo requests and sends them on an unprivileged ICMP
+socket (no root needed, see below), and the map is drawn with Bevy: fly
+around with the keyboard and mouse, click a host for its details.
 
-## Build the viewer (once)
+## Build (once)
 
 ```sh
-cd viewer
-cargo build --release      # about 10 min the first time; needs Rust (rustup)
+cargo build --release      # in the repo root; about 10 min the first time; needs Rust (rustup)
 ```
 
 `rust-toolchain.toml` pins the compiler Bevy needs (rustc 1.99.1); rustup
-installs it on the first `cargo` command there. On Debian/Ubuntu the build also
-needs `libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev`. Until the
-viewer is built, `python -m netvisualizer` stops and prints the build command.
+installs it on the first `cargo` command in the repo. On Debian/Ubuntu the build also
+needs `libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libpython3-dev`.
+The program is `target/release/netvisualizer` (or `cargo run --release --`
+followed by its arguments).
+
+The program embeds Python 3 for a few features (the `netvisualizer/` package).
+It links the libpython it was built with, so after a Python upgrade, rebuild.
+Python packages go into `.venv` (`.venv/bin/pip install pandas asyncssh`);
+`netvisualizer -v` says which ones it can import.
 
 ## Run
 
 ```sh
-python -m netvisualizer                      # detect the interface, sweep its subnet, open the map
-python -m netvisualizer 192.168.1.0/24       # sweep this network instead
-python -m netvisualizer --ports              # then try common TCP ports on the hosts that answered
-python -m netvisualizer --ports 22,80,8000-8010
-python -m netvisualizer --save last.json     # keep the result; --json last.json replays it later
-python -m netvisualizer --list-interfaces    # which networks this machine is on
-python -m netvisualizer --help               # everything else
+netvisualizer                                   # the window; nothing is scanned
+netvisualizer --scan                            # sweep the subnet of the interface with the default route
+netvisualizer --scan 192.168.1.0/24             # this network instead
+netvisualizer --scan --ports                    # then try common TCP ports on the hosts that answered
+netvisualizer --scan --ports 22,80,8000-8010
+netvisualizer --scan --save last.json           # keep the result; --json last.json shows it again
+netvisualizer --scan --no-window                # scan and print the hosts, no window
+netvisualizer --list-interfaces                 # which networks this machine is on
+netvisualizer --help                            # everything else
 ```
 
-The map server starts at `http://127.0.0.1:8765/` before the scan does, and
-the viewer redraws itself as each stage completes. Closing the viewer window
-ends the program. With `--no-open` nothing is opened and the server runs until
-Ctrl-C, for a viewer started by hand (below), or on another machine with
-`--host 0.0.0.0`. To try it without scanning, replay the saved fake LAN in
-`viewer/tests/fixtures/demo.json` with `--json`.
+Nothing touches the network without `--scan` (a Scan button comes with the UI
+work). The window opens straight away and the map redraws as each stage of
+the scan finishes; closing the window ends the program. To try it without
+scanning, show the saved fake LAN: `netvisualizer --json viewer/tests/fixtures/demo.json`.
+
+### Privileges
+
+The sweep needs no root. Linux lets a process open an ICMP "datagram" socket
+when its group is inside `net.ipv4.ping_group_range` (most distributions
+allow every group: check with `sysctl net.ipv4.ping_group_range`). Without
+that, run as root and the sweep uses a raw socket; failing both, it runs the
+system `ping` once per address.
 
 ## Controls
 
@@ -50,37 +63,34 @@ Ctrl-C, for a viewer started by hand (below), or on another machine with
 | `F`, `R` | fly to the selection; reset the view |
 | `/`, `Esc`, `?` | filter the host list; deselect; help |
 
-## Viewer development
-
-`viewer/` is a Rust crate (Bevy 0.20 + bevy_egui) that follows a map server,
-or draws a saved map. `python -m netvisualizer --json viewer/tests/fixtures/demo.json --no-open`
-in another terminal serves a fake LAN to follow:
+## Development
 
 ```sh
+cargo test --workspace --features netvisualizer/dev   # everything
+cargo test -p netvisualizer-scanner                   # the scanner alone: builds in seconds, no Bevy
+
 cd viewer
-cargo run --features dev                                      # follow http://127.0.0.1:8765
-cargo run --features dev -- http://10.0.0.5:8765              # a map served elsewhere (--host 0.0.0.0)
-cargo run --features dev -- --json tests/fixtures/demo.json   # a saved map, no server
-cargo test --features dev
+cargo run --features dev -- --json tests/fixtures/demo.json   # a saved map
+cargo run --features dev -- --scan --ports                    # a real scan
 ```
 
-`--features dev` links Bevy dynamically so rebuilds take seconds; the Python
-launcher runs the release build. `--exit-after-frames 120 --screenshot out.png`
+`--features dev` links Bevy dynamically so rebuilds take seconds; use the
+release build for normal runs. `--exit-after-frames 120 --screenshot out.png`
 renders two seconds and quits, which is the smoke test; add
 `--select 192.168.1.1 --fly` to see a selection, or `--help-overlay` for the
-help card, in that screenshot.
+help card, in that screenshot. `-v` shows Bevy's own messages too.
 If the window never appears with "Unable to find a GPU", a `WGPU_BACKEND`
-variable in your environment names a backend your GPU cannot use; the viewer
+variable in your environment names a backend your GPU cannot use; the program
 prints a line and falls back to another one on its own.
 
 ## Layout
 
 ```
-netvisualizer/
-  __main__.py     which steps run, in what order; starts the map server, then the viewer
-  netutils.py     finds hosts and fills in their values (sweep, names, ports)
-  model.py        Host and Port: the one shape shared by both sides
-  graphics/       turns Hosts into the JSON map and serves it to the viewer
-tests/            python -m unittest discover tests
-viewer/           the viewer (Rust, Bevy) that draws that JSON; cargo test
+Cargo.toml        the Cargo workspace: scanner + viewer
+scanner/          netvisualizer-scanner: finds hosts and fills in their values (sweep, names, ports)
+  src/model.rs    Host and Port: the one shape shared by both sides
+viewer/           netvisualizer, the program: the window, and scan.rs, which runs the scanner
+netvisualizer/    the project spec (and, from Milestone 5.7, Python the program embeds)
+tests/            Python tests
+assets/           data files: the MAC vendor CSV (Milestone 6)
 ```

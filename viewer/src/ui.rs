@@ -42,37 +42,32 @@ pub struct Status {
     pub text: String,
     /// Drawn in the error colour.
     pub error: bool,
-    /// The last map summary, shown again once the server is back.
-    summary: String,
 }
 
 impl Default for Status {
     fn default() -> Self {
-        Status {
-            text: "connecting…".to_string(),
-            error: false,
-            summary: String::new(),
-        }
+        Status::message("no scan yet · start one with --scan")
     }
 }
 
 impl Status {
+    /// A plain message, shown until the first map arrives.
+    pub fn message(text: &str) -> Status {
+        Status {
+            text: text.to_string(),
+            error: false,
+        }
+    }
+
     /// A new map arrived: show its summary.
     pub fn show_map(&mut self, summary: String) {
-        self.text.clone_from(&summary);
-        self.summary = summary;
+        self.text = summary;
         self.error = false;
     }
 
     pub fn show_error(&mut self, message: String) {
         self.text = message;
         self.error = true;
-    }
-
-    /// The server answers again: back to the summary of the map on screen.
-    pub fn restore(&mut self) {
-        self.text.clone_from(&self.summary);
-        self.error = false;
     }
 }
 
@@ -241,7 +236,9 @@ fn draw_hud(
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 12.0;
-                        ui.add(egui::Label::new(text("Netvisualizer", theme::TEXT).strong()).extend());
+                        ui.add(
+                            egui::Label::new(text("Netvisualizer", theme::TEXT).strong()).extend(),
+                        );
                         let color = if status.error {
                             theme::ERROR
                         } else {
@@ -631,15 +628,14 @@ mod tests {
     }
 
     #[test]
-    fn the_status_line_falls_back_to_the_last_summary() {
+    fn the_status_line_shows_a_message_a_map_or_an_error() {
         let mut status = Status::default();
-        assert_eq!(status.text, "connecting…");
-        status.show_map("demo · 3 hosts · rev 1".into());
-        status.show_error("server unreachable, retrying… (io: refused)".into());
+        assert_eq!(status.text, "no scan yet · start one with --scan");
+        status.show_error("scan failed: boom".into());
         assert!(status.error);
-        status.restore();
-        assert_eq!(status.text, "demo · 3 hosts · rev 1");
-        assert!(!status.error);
+        status.show_map("ping_sweep · done · 3 hosts · rev 4".into());
+        assert_eq!(status.text, "ping_sweep · done · 3 hosts · rev 4");
+        assert!(!status.error, "a new map clears the error");
     }
 
     /// Every character the UI draws must exist in egui's bundled fonts, or it
@@ -661,7 +657,7 @@ mod tests {
             })
         };
         // Text in the HUD, card and labels: "·" and "…" arrive in summaries
-        // and stage names from Python, "—" is an empty value.
+        // and stage names from the scan, "—" is an empty value.
         let used = [
             (
                 "proportional",

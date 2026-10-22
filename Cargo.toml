@@ -1,0 +1,28 @@
+# Netvisualizer, the Rust side:
+#   scanner/  netvisualizer-scanner, a library that finds the hosts on a network
+#   viewer/   netvisualizer, the program: the map window, and the glue that runs scans
+# Cargo.lock, rust-toolchain.toml and target/ are shared at this level; cargo
+# works from here or from either crate's directory.
+
+[workspace]
+members = ["scanner", "viewer"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+# Bevy's recommended profiles: our own code unoptimised for quick compiles,
+# every dependency (Bevy, wgpu, tokio) optimised so the dev build still renders
+# smoothly. Profiles only take effect here, in the workspace root.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

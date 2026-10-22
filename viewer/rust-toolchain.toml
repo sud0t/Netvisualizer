@@ -1,9 +1,0 @@
-# Bevy 0.20 needs rustc >= 1.97.1 (its declared rust-version); the system
-# default was 1.96.1 when this crate was started (2026-10-20). rustup reads
-# this file and installs the pinned toolchain on the first `cargo` command in
-# this directory, leaving the default toolchain alone. Bump it together with
-# Bevy, or delete it once `rustup update` has moved stable past 1.97.1 for good.
-[toolchain]
-channel = "1.99.1"
-profile = "minimal"
-components = ["rustfmt", "clippy"]

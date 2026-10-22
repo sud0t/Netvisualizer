@@ -91,9 +91,8 @@ impl NodeState {
     const ALL: [NodeState; 3] = [NodeState::None, NodeState::Hover, NodeState::Selected];
 }
 
-/// The latest map: loaded once from `--json`, or replaced by fetch.rs whenever
-/// the server's revision changes. `None` until the first map arrives in live
-/// mode.
+/// The latest map: loaded once from `--json`, or replaced by scan.rs after
+/// each stage of a scan. `None` until the first map arrives.
 #[derive(Resource, Debug, Default)]
 pub struct MapDocument(pub Option<MapDoc>);
 

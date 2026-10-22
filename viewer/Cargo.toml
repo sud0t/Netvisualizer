@@ -1,13 +1,13 @@
 [package]
-name = "netvisualizer-viewer"
-version = "0.1.0"
-edition = "2024"
-description = "Native viewer for Netvisualizer network maps (Bevy); reads the JSON map the Python side serves or saves"
-license = "MIT"
-publish = false
+name = "netvisualizer"
+description = "Netvisualizer: the network map in a native window (Bevy); reads the JSON map the Python side serves or saves"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
 
 [[bin]]
-name = "netvisualizer-viewer"
+name = "netvisualizer"
 path = "src/main.rs"
 
 [dependencies]
@@ -28,24 +28,18 @@ clap = { version = "4.6", features = ["derive"] }
 # Same wgpu Bevy renders with; used directly only to probe for a GPU adapter
 # before Bevy starts (see render_settings in main.rs).
 wgpu = { version = "30", default-features = false }
-# Live mode (fetch.rs): blocking HTTP on a plain thread, no async runtime.
-# The map server is Python's http.server on plain HTTP, so the defaults (rustls
-# with ring, gzip) are left out. Same major version bevy_asset's `http` uses.
-ureq = { version = "3.4", default-features = false }
+# The networking side (../scanner): finds the hosts. scan.rs decides which
+# of its steps run, in what order, and turns their results into maps.
+scanner = { version = "0.1.0", path = "../scanner", package = "netvisualizer-scanner" }
+# The scanner is async; scan.rs gives each scan a runtime on its own thread.
+tokio = { version = "1.54.1", features = ["rt"] }
+# Embeds Python (python.rs) for the parts that stay in Python. Links the
+# system's libpython: a Python upgrade means a rebuild. `auto-initialize`
+# starts the interpreter on first use.
+pyo3 = { version = "0.30.1", features = ["auto-initialize"] }
 
 [features]
 # `cargo run --features dev` links Bevy as a shared library: rebuilds after a
 # source edit take seconds instead of minutes. Never use it for a release build.
 dev = ["bevy/dynamic_linking"]
 
-# Bevy's recommended profiles: our own code unoptimised for quick compiles,
-# every dependency (Bevy, wgpu) optimised so the dev build still renders smoothly.
-[profile.dev]
-opt-level = 1
-
-[profile.dev.package."*"]
-opt-level = 3
-
-[profile.release]
-codegen-units = 1
-lto = "thin"
