@@ -162,9 +162,12 @@ impl MapDoc {
     /// - every host once (of two with the same address, the first wins);
     /// - the scanner in the middle with role "scanner", added at the front if
     ///   the scan did not find it itself, and the gateway with role "gateway";
-    /// - links in a star from the scanner to everyone else, the only topology
-    ///   a ping sweep implies;
-    /// - positions from [`layout::star_ring`].
+    /// - links the way packets go, as far as a sweep can tell: a host on the
+    ///   scanner's own subnet is reached directly (a "subnet" link from the
+    ///   scanner), a host outside it (`is_local: false`) through the gateway
+    ///   (a "route" link from the gateway, or from the scanner when the map
+    ///   has no gateway);
+    /// - positions from [`layout::star_ring`], which follows the links.
     ///
     /// `scan.scanner_ip` is filled in from `scanner_ip`.
     pub fn from_hosts(
@@ -178,10 +181,33 @@ impl MapDoc {
         let missing_scanner = scanner_ip
             .filter(|ip| !seen.contains(ip))
             .map(scanner::Host::new);
+        let all: Vec<&scanner::Host> = missing_scanner.iter().chain(unique).collect();
 
-        let mut entries: Vec<Host> = missing_scanner
+        let links = match scanner_ip {
+            Some(scanner) => {
+                let gateway = gateway_ip.filter(|ip| all.iter().any(|h| h.ip == *ip));
+                all.iter()
+                    .filter(|h| h.ip != scanner)
+                    .map(|h| {
+                        let (source, kind) = if h.is_local == Some(false) && Some(h.ip) != gateway {
+                            (gateway.unwrap_or(scanner), "route")
+                        } else {
+                            (scanner, "subnet")
+                        };
+                        Link {
+                            source: source.to_string(),
+                            target: h.ip.to_string(),
+                            kind: Some(kind.to_string()),
+                            rest: Map::new(),
+                        }
+                    })
+                    .collect()
+            }
+            None => Vec::new(),
+        };
+
+        let mut entries: Vec<Host> = all
             .iter()
-            .chain(unique)
             .map(|host| {
                 let role = if Some(host.ip) == scanner_ip {
                     Role::Scanner
@@ -193,24 +219,10 @@ impl MapDoc {
                 Host::from_scanner(host, role)
             })
             .collect();
-        let positions = layout::star_ring(&entries);
+        let positions = layout::star_ring(&entries, &links);
         for (entry, position) in entries.iter_mut().zip(positions) {
             entry.position = Some(position);
         }
-
-        let links = match scanner_ip.map(|ip| ip.to_string()) {
-            Some(centre) => entries
-                .iter()
-                .filter(|h| h.id != centre)
-                .map(|h| Link {
-                    source: centre.clone(),
-                    target: h.id.clone(),
-                    kind: Some("subnet".to_string()),
-                    rest: Map::new(),
-                })
-                .collect(),
-            None => Vec::new(),
-        };
         scan.scanner_ip = scanner_ip.map(|ip| ip.to_string());
         MapDoc {
             version: CONTRACT_VERSION,
@@ -546,6 +558,58 @@ mod tests {
             doc.links
                 .iter()
                 .all(|l| l.kind.as_deref() == Some("subnet"))
+        );
+    }
+
+    #[test]
+    fn hosts_outside_the_subnet_are_linked_through_the_gateway() {
+        let mut hosts = scanned(&["10.0.0.1", "10.0.0.254", "10.0.0.7", "192.168.5.9"]);
+        for host in &mut hosts {
+            host.is_local = Some(host.ip.to_string().starts_with("10."));
+        }
+        let doc = MapDoc::from_hosts(
+            &hosts,
+            Some(ip("10.0.0.1")),
+            Some(ip("10.0.0.254")),
+            Scan::default(),
+        );
+        let links: Vec<(&str, &str, Option<&str>)> = doc
+            .links
+            .iter()
+            .map(|l| (l.source.as_str(), l.target.as_str(), l.kind.as_deref()))
+            .collect();
+        assert_eq!(
+            links,
+            [
+                ("10.0.0.1", "10.0.0.254", Some("subnet")),
+                ("10.0.0.1", "10.0.0.7", Some("subnet")),
+                ("10.0.0.254", "192.168.5.9", Some("route")),
+            ]
+        );
+        // Drawn out beyond the gateway, which is first on the inner ring.
+        let remote = doc.hosts[3].position.unwrap();
+        assert!(remote[0] > layout::MIN_RADIUS, "{remote:?}");
+    }
+
+    #[test]
+    fn without_a_gateway_on_the_map_remote_hosts_hang_off_the_scanner() {
+        let mut hosts = scanned(&["10.0.0.1", "192.168.5.9", "10.0.0.7"]);
+        hosts[1].is_local = Some(false);
+        let doc = MapDoc::from_hosts(
+            &hosts,
+            Some(ip("10.0.0.1")),
+            Some(ip("10.0.0.254")), // not on the map
+            Scan::default(),
+        );
+        let links: Vec<(&str, Option<&str>)> = doc
+            .links
+            .iter()
+            .map(|l| (l.source.as_str(), l.kind.as_deref()))
+            .collect();
+        assert_eq!(
+            links,
+            [("10.0.0.1", Some("route")), ("10.0.0.1", Some("subnet"))],
+            "still routed, and is_local unknown counts as local"
         );
     }
 

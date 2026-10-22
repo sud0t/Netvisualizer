@@ -43,3 +43,7 @@ pyo3 = { version = "0.30.1", features = ["auto-initialize"] }
 # source edit take seconds instead of minutes. Never use it for a release build.
 dev = ["bevy/dynamic_linking"]
 
+[build-dependencies]
+# build.rs: the rpath to the libpython PyO3 links (see .cargo/config.toml).
+pyo3-build-config = "0.30.1"
+

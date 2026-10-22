@@ -1,12 +1,23 @@
-//! Where each host goes in the scene when the map is built from a scan: the
-//! scanner at the origin, everyone else on concentric rings around it in
-//! address order, the gateway first. y is up; each ring floats a little
-//! higher than the one inside it. (Moved here from `graphics/layout.py`.)
+//! Where each host goes in the scene when the map is built from a scan. The
+//! layout follows the links, as a tree of rings:
+//!
+//! - the scanner at the origin;
+//! - the hosts linked to it (its own subnet) on concentric rings around it,
+//!   the gateway first, then in address order;
+//! - the hosts linked to one of those (hosts outside the subnet, reached
+//!   through the gateway) on rings of their own around a point straight out
+//!   beyond it, outside the scanner's rings, so their links fan out away
+//!   from the middle.
+//!
+//! y is up; each ring floats a little higher than the one inside it. Two
+//! levels are all a sweep can tell apart; traceroute (Milestone 8) will need
+//! deeper trees. (Moved here from `graphics/layout.py`.)
 
+use std::collections::HashMap;
 use std::f32::consts::TAU;
 use std::net::IpAddr;
 
-use crate::map::{Host, Role};
+use crate::map::{Host, Link, Role};
 
 /// World units between neighbours on a ring.
 pub const SPACING: f32 = 3.0;
@@ -32,17 +43,82 @@ pub fn ring_plan(count: usize) -> Vec<usize> {
     plan
 }
 
-/// A position for every host, parallel to `hosts`: the first scanner at the
-/// origin, the others (a second scanner too, should one turn up) on the
-/// rings. Odd rings are turned by half a step so nodes do not line up
-/// radially. Coordinates are rounded to 1/1000 to keep saved maps tidy.
-pub fn star_ring(hosts: &[Host]) -> Vec<[f32; 3]> {
+/// A position for every host, parallel to `hosts` (see the module comment).
+/// Each host hangs off the source of the first link that targets it; hosts
+/// no link reaches go on the scanner's rings, as do all hosts of a map
+/// without a scanner. Coordinates are rounded to 1/1000 to keep saved maps
+/// tidy.
+pub fn star_ring(hosts: &[Host], links: &[Link]) -> Vec<[f32; 3]> {
     let mut positions = vec![[0.0; 3]; hosts.len()];
     let centre = hosts.iter().position(|h| h.role() == Role::Scanner);
-    let mut others: Vec<usize> = (0..hosts.len()).filter(|&i| Some(i) != centre).collect();
-    // The gateway first, then by address (IPv4 before IPv6, numerically, so
-    // .9 before .10); ids that are not addresses go last, in their own order.
-    others.sort_by_key(|&i| {
+    let index: HashMap<&str, usize> = hosts
+        .iter()
+        .enumerate()
+        .map(|(i, host)| (host.id.as_str(), i))
+        .collect();
+    let mut parent: Vec<Option<usize>> = vec![None; hosts.len()];
+    for link in links {
+        if let (Some(&source), Some(&target)) = (
+            index.get(link.source.as_str()),
+            index.get(link.target.as_str()),
+        ) && source != target
+            && parent[target].is_none()
+        {
+            parent[target] = Some(source);
+        }
+    }
+
+    // The scanner's rings.
+    let around_centre: Vec<usize> = (0..hosts.len())
+        .filter(|&i| Some(i) != centre && (parent[i].is_none() || parent[i] == centre))
+        .collect();
+    let inner_reach = place_on_rings(hosts, &around_centre, [0.0; 3], &mut positions);
+
+    // Everyone else, grouped by the host they hang off, in the order those
+    // groups first appear.
+    let mut groups: Vec<(usize, Vec<usize>)> = Vec::new();
+    for (i, via) in parent.iter().enumerate() {
+        let Some(via) = *via else { continue };
+        if Some(via) == centre || Some(i) == centre {
+            continue;
+        }
+        match groups.iter_mut().find(|(v, _)| *v == via) {
+            Some((_, members)) => members.push(i),
+            None => groups.push((via, vec![i])),
+        }
+    }
+    for (via, members) in groups {
+        let [x, _, z] = positions[via];
+        let out = x.hypot(z);
+        let (dx, dz) = if out > 0.0 {
+            (x / out, z / out)
+        } else {
+            (1.0, 0.0)
+        };
+        // Far enough out that the group's outermost ring clears the
+        // scanner's: its centre beyond both those rings and the host it
+        // hangs off, by one gap plus the group's own reach.
+        let reach = MIN_RADIUS + (ring_plan(members.len()).len() - 1) as f32 * RING_GAP;
+        let distance = inner_reach.max(out) + RING_GAP + reach;
+        let anchor = [dx * distance, 0.0, dz * distance];
+        place_on_rings(hosts, &members, anchor, &mut positions);
+    }
+    positions
+}
+
+/// Put `members` on concentric rings around `centre`: the gateway first,
+/// then by address (IPv4 before IPv6, numerically, so .9 before .10; ids
+/// that are not addresses last, in their own order). Odd rings are turned
+/// by half a step so nodes do not line up radially. Returns the radius of
+/// the outermost ring, 0 when there is nobody to place.
+fn place_on_rings(
+    hosts: &[Host],
+    members: &[usize],
+    centre: [f32; 3],
+    positions: &mut [[f32; 3]],
+) -> f32 {
+    let mut order = members.to_vec();
+    order.sort_by_key(|&i| {
         let host = &hosts[i];
         let address = host.id.parse::<IpAddr>().ok().map(|ip| match ip {
             IpAddr::V4(v4) => (4, u128::from(v4.to_bits())),
@@ -51,23 +127,25 @@ pub fn star_ring(hosts: &[Host]) -> Vec<[f32; 3]> {
         (host.role() != Role::Gateway, address.is_none(), address)
     });
 
-    let mut next = others.iter();
-    for (ring, count) in ring_plan(others.len()).into_iter().enumerate() {
+    let mut next = order.iter();
+    let mut outermost = 0.0;
+    for (ring, count) in ring_plan(order.len()).into_iter().enumerate() {
         let radius = MIN_RADIUS + ring as f32 * RING_GAP;
-        let y = ring as f32 * RING_RISE;
+        outermost = radius;
+        let y = centre[1] + ring as f32 * RING_RISE;
         let step = TAU / count as f32;
         let offset = if ring % 2 == 1 { step / 2.0 } else { 0.0 };
         for slot in 0..count {
             let angle = offset + slot as f32 * step;
             let index = *next.next().expect("the plan places every host");
             positions[index] = [
-                round3(radius * angle.cos()),
+                round3(centre[0] + radius * angle.cos()),
                 y,
-                round3(radius * angle.sin()),
+                round3(centre[2] + radius * angle.sin()),
             ];
         }
     }
-    positions
+    outermost
 }
 
 fn round3(value: f32) -> f32 {
@@ -76,6 +154,8 @@ fn round3(value: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::Map;
+
     use super::*;
 
     /// Hosts with these ids; `scanner` and `gateway` name the ones with those roles.
@@ -92,6 +172,15 @@ mod tests {
                 serde_json::from_value(serde_json::json!({"id": id, "role": role})).unwrap()
             })
             .collect()
+    }
+
+    fn link(source: &str, target: &str) -> Link {
+        Link {
+            source: source.to_string(),
+            target: target.to_string(),
+            kind: None,
+            rest: Map::new(),
+        }
     }
 
     fn lan(n: usize) -> Vec<String> {
@@ -113,7 +202,7 @@ mod tests {
 
     #[test]
     fn scanner_at_the_origin_and_everyone_somewhere_else() {
-        let positions = star_ring(&with_scanner(10));
+        let positions = star_ring(&with_scanner(10), &[]);
         assert_eq!(positions[0], [0.0, 0.0, 0.0]);
         for (i, a) in positions.iter().enumerate() {
             for b in &positions[i + 1..] {
@@ -124,7 +213,7 @@ mod tests {
 
     #[test]
     fn a_small_network_sits_on_the_inner_ring() {
-        for p in &star_ring(&with_scanner(6))[1..] {
+        for p in &star_ring(&with_scanner(6), &[])[1..] {
             assert!((radius(*p) - MIN_RADIUS).abs() < 0.01, "{p:?}");
             assert_eq!(p[1], 0.0);
         }
@@ -132,7 +221,7 @@ mod tests {
 
     #[test]
     fn a_large_network_spills_onto_further_rings() {
-        let positions = star_ring(&with_scanner(60));
+        let positions = star_ring(&with_scanner(60), &[]);
         let mut radii: Vec<i32> = positions[1..]
             .iter()
             .map(|p| radius(*p).round() as i32)
@@ -150,7 +239,7 @@ mod tests {
         let ids = [
             "10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5", "10.0.0.6",
         ];
-        let positions = star_ring(&hosts(&ids, Some("10.0.0.1"), Some("10.0.0.6")));
+        let positions = star_ring(&hosts(&ids, Some("10.0.0.1"), Some("10.0.0.6")), &[]);
         let [x, _, z] = positions[5];
         assert!(
             (x - MIN_RADIUS).abs() < 0.01 && z.abs() < 0.01,
@@ -163,7 +252,7 @@ mod tests {
     fn hosts_go_around_the_ring_in_address_order() {
         // Listed out of order, and .10 after .9 numerically, not as text.
         let ids = ["10.0.0.1", "10.0.0.10", "10.0.0.3", "10.0.0.9", "10.0.0.2"];
-        let positions = star_ring(&hosts(&ids, Some("10.0.0.1"), None));
+        let positions = star_ring(&hosts(&ids, Some("10.0.0.1"), None), &[]);
         let angle = |i: usize| positions[i][2].atan2(positions[i][0]).rem_euclid(TAU);
         let order = [4, 2, 3, 1]; // .2, .3, .9, .10
         for pair in order.windows(2) {
@@ -174,10 +263,50 @@ mod tests {
     #[test]
     fn without_a_scanner_nobody_takes_the_origin() {
         let ids = ["10.0.0.2", "10.0.0.3", "10.0.0.4"];
-        for p in star_ring(&hosts(&ids, None, None)) {
+        for p in star_ring(&hosts(&ids, None, None), &[]) {
             assert!((radius(p) - MIN_RADIUS).abs() < 0.01, "{p:?}");
         }
-        assert!(star_ring(&[]).is_empty());
+        assert!(star_ring(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn hosts_behind_the_gateway_get_rings_of_their_own_beyond_it() {
+        // The scanner, its gateway and 19 neighbours (two rings: 16 + 3, out
+        // to radius 14), and 5 hosts on another network behind the gateway.
+        let mut ids = vec!["10.0.0.1".to_string(), "10.0.0.254".to_string()];
+        ids.extend(lan(19));
+        let remote: Vec<String> = (1..=5).map(|i| format!("192.168.5.{i}")).collect();
+        ids.extend(remote.iter().cloned());
+        let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let map_hosts = hosts(&ids, Some("10.0.0.1"), Some("10.0.0.254"));
+        let mut links: Vec<Link> = ids[1..21].iter().map(|id| link("10.0.0.1", id)).collect();
+        links.extend(remote.iter().map(|id| link("10.0.0.254", id)));
+
+        let positions = star_ring(&map_hosts, &links);
+        let gateway = positions[1];
+        assert!((gateway[0] - MIN_RADIUS).abs() < 0.01 && gateway[2].abs() < 0.01);
+        let local_reach = MIN_RADIUS + RING_GAP;
+        for (id, p) in ids.iter().zip(&positions).skip(21) {
+            assert!(
+                radius(*p) > local_reach + RING_GAP - 0.01,
+                "{id} at {p:?} is inside the scanner's rings"
+            );
+            assert!(
+                p[0] > local_reach,
+                "{id} at {p:?} is not out beyond the gateway"
+            );
+        }
+        // The group sits on its own ring around a point on the gateway's side.
+        let centre = positions[21..].iter().fold([0.0f32; 2], |acc, p| {
+            [acc[0] + p[0] / 5.0, acc[1] + p[2] / 5.0]
+        });
+        assert!(centre[1].abs() < 0.01, "on the gateway's axis: {centre:?}");
+        let expected = local_reach + RING_GAP + MIN_RADIUS;
+        assert!((centre[0] - expected).abs() < 0.01, "{centre:?}");
+        for p in &positions[21..] {
+            let from_centre = (p[0] - centre[0]).hypot(p[2] - centre[1]);
+            assert!((from_centre - MIN_RADIUS).abs() < 0.01, "{p:?}");
+        }
     }
 
     #[test]

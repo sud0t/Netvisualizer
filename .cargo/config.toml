@@ -1,0 +1,7 @@
+[env]
+# The Python the binary embeds (viewer/src/python.rs): PyO3 links its
+# libpython, and viewer/build.rs records where that lives so the binary finds
+# it at run time. .venv must be made from the same version. After a Python
+# upgrade (uv's patch releases included): change this if the version changed,
+# recreate .venv, `cargo clean -p pyo3-build-config`, rebuild.
+PYO3_PYTHON = "python3.15"

@@ -177,7 +177,7 @@ async fn run(plan: &ScanPlan, tx: &Sender<ScanEvent>) -> Result<(), String> {
         sweep.method.describe()
     ));
     let mut hosts = sweep.hosts;
-    keep_gateway(&mut hosts, plan.local.gateway);
+    keep_gateway(&mut hosts, plan.local.gateway, &plan.network);
     local::mark_local(&mut hosts, &plan.local.network);
 
     if settings.names {
@@ -222,19 +222,28 @@ async fn run(plan: &ScanPlan, tx: &Sender<ScanEvent>) -> Result<(), String> {
     Ok(())
 }
 
-/// Keep the gateway on the map even when it ignored the ping (many routers
-/// do); it is drawn greyed out.
-fn keep_gateway(hosts: &mut Vec<scanner::Host>, gateway: Option<Ipv4Addr>) {
-    let Some(gateway) = gateway.map(IpAddr::V4) else {
+/// Keep the gateway on the map even when the sweep did not find it. Inside
+/// the swept network that means it ignored the ping (many routers do), and
+/// it is drawn greyed out. Outside it, it was never pinged, but the swept
+/// hosts are reached through it, so it is drawn like any other host.
+fn keep_gateway(hosts: &mut Vec<scanner::Host>, gateway: Option<Ipv4Addr>, swept: &Ipv4Net) {
+    let Some(gateway) = gateway else {
         return;
     };
-    if hosts.iter().any(|h| h.ip == gateway) {
+    if hosts.iter().any(|h| h.ip == IpAddr::V4(gateway)) {
         return;
     }
     let mut host = scanner::Host::new(gateway);
-    host.extra.insert("status".into(), "down".into());
-    host.extra
-        .insert("note".into(), "did not answer ping".into());
+    if swept.contains(&gateway) {
+        host.extra.insert("status".into(), "down".into());
+        host.extra
+            .insert("note".into(), "did not answer ping".into());
+    } else {
+        host.extra.insert(
+            "note".into(),
+            "not swept: outside the scanned network".into(),
+        );
+    }
     hosts.push(host);
 }
 
@@ -486,9 +495,9 @@ mod tests {
 
     use super::*;
 
-    /// A scan of 127.0.0.0/30 "from" loopback: both addresses answer, and
-    /// one has a port open.
-    fn loopback_plan(ports: Vec<u16>, gateway: Option<Ipv4Addr>) -> ScanPlan {
+    /// A scan of 127.0.0.0/30 "from" loopback, which has no gateway: both
+    /// addresses answer.
+    fn loopback_plan(ports: Vec<u16>) -> ScanPlan {
         let settings = ScanSettings {
             network: Some("127.0.0.0/30".parse().unwrap()),
             ports,
@@ -502,7 +511,7 @@ mod tests {
                 interface: "lo".into(),
                 ip: Ipv4Addr::LOCALHOST,
                 network: "127.0.0.0/8".parse().unwrap(),
-                gateway,
+                gateway: None,
             },
         }
     }
@@ -525,7 +534,7 @@ mod tests {
     fn a_scan_sends_a_map_per_stage_and_finishes() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
-        let events = all_events(loopback_plan(vec![port], None));
+        let events = all_events(loopback_plan(vec![port]));
 
         assert!(
             matches!(events.last(), Some(ScanEvent::Finished(Ok(())))),
@@ -580,12 +589,32 @@ mod tests {
         );
     }
 
+    /// A scan "from" 192.0.2.10 on 192.0.2.0/24, a network reserved for
+    /// documentation where nothing ever answers.
+    fn documentation_plan(network: &str) -> ScanPlan {
+        let settings = ScanSettings {
+            network: Some(network.parse().unwrap()),
+            names: false,
+            timeout: Duration::from_millis(300),
+            ..ScanSettings::default()
+        };
+        ScanPlan {
+            network: settings.network.unwrap(),
+            settings,
+            local: LocalNetwork {
+                interface: "test0".into(),
+                ip: Ipv4Addr::new(192, 0, 2, 10),
+                network: "192.0.2.0/24".parse().unwrap(),
+                gateway: Some(Ipv4Addr::new(192, 0, 2, 1)),
+            },
+        }
+    }
+
     #[test]
     fn a_silent_gateway_is_kept_greyed_out_and_the_map_is_saved() {
         let path =
             std::env::temp_dir().join(format!("netvisualizer-scan-{}.json", std::process::id()));
-        let mut plan = loopback_plan(Vec::new(), Some(Ipv4Addr::new(192, 0, 2, 1)));
-        plan.settings.names = false;
+        let mut plan = documentation_plan("192.0.2.0/30"); // the gateway's own network
         plan.settings.save = Some(path.clone());
         let events = all_events(plan);
         assert!(
@@ -597,15 +626,50 @@ mod tests {
             .iter()
             .filter_map(|m| m.scan.stage.clone())
             .collect();
-        assert_eq!(stages, ["sweeping 127.0.0.0/30…", "done"]);
+        assert_eq!(stages, ["sweeping 192.0.2.0/30…", "done"]);
 
         let saved = MapDoc::load(&path).unwrap();
         let _ = std::fs::remove_file(&path);
-        let gateway = saved.hosts.iter().find(|h| h.id == "192.0.2.1").unwrap();
+        let ids: Vec<&str> = saved.hosts.iter().map(|h| h.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["192.0.2.10", "192.0.2.1"],
+            "the scanner and its gateway"
+        );
+        let gateway = &saved.hosts[1];
         assert_eq!(gateway.role(), crate::map::Role::Gateway);
         assert_eq!(gateway.status(), HostStatus::Down);
-        assert_eq!(saved.hosts.len(), 3);
+        assert_eq!(gateway.fields["extra"]["note"], "did not answer ping");
         assert_eq!(saved.revision, 2);
+    }
+
+    /// Scanning 127.0.0.0/30 from 192.0.2.0/24: both loopback addresses are
+    /// outside that subnet, so they hang off the gateway, which is kept
+    /// although it was not swept, and not greyed out.
+    #[test]
+    fn hosts_on_another_network_are_linked_through_the_gateway() {
+        let events = all_events(documentation_plan("127.0.0.0/30"));
+        let done = *maps(&events).last().unwrap();
+        let links: Vec<(&str, &str, Option<&str>)> = done
+            .links
+            .iter()
+            .map(|l| (l.source.as_str(), l.target.as_str(), l.kind.as_deref()))
+            .collect();
+        assert_eq!(
+            links,
+            [
+                ("192.0.2.1", "127.0.0.1", Some("route")),
+                ("192.0.2.1", "127.0.0.2", Some("route")),
+                ("192.0.2.10", "192.0.2.1", Some("subnet")),
+            ]
+        );
+        let gateway = done.hosts.iter().find(|h| h.id == "192.0.2.1").unwrap();
+        assert_eq!(
+            gateway.status(),
+            HostStatus::Up,
+            "never pinged, so not down"
+        );
+        assert_eq!(gateway.fields["is_local"], true);
     }
 
     #[test]

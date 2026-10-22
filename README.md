@@ -16,14 +16,21 @@ cargo build --release      # in the repo root; about 10 min the first time; need
 
 `rust-toolchain.toml` pins the compiler Bevy needs (rustc 1.99.1); rustup
 installs it on the first `cargo` command in the repo. On Debian/Ubuntu the build also
-needs `libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libpython3-dev`.
+needs `libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev`.
 The program is `target/release/netvisualizer` (or `cargo run --release --`
 followed by its arguments).
 
-The program embeds Python 3 for a few features (the `netvisualizer/` package).
-It links the libpython it was built with, so after a Python upgrade, rebuild.
-Python packages go into `.venv` (`.venv/bin/pip install pandas asyncssh`);
-`netvisualizer -v` says which ones it can import.
+The program embeds Python 3.15 for a few features (the `netvisualizer/` package):
+`.cargo/config.toml` names the interpreter (`python3.15`, installed with
+`uv python install 3.15`), and the build links its libpython, so after a Python
+upgrade, rebuild. The packages it uses live in `.venv`, made from the same Python:
+
+```sh
+uv venv --python 3.15 --seed .venv
+.venv/bin/pip install pandas asyncssh
+```
+
+`netvisualizer -v` says which Python it embeds and which packages it can import.
 
 ## Run
 

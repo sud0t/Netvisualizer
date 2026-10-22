@@ -4057,6 +4057,7 @@ dependencies = [
  "clap",
  "netvisualizer-scanner",
  "pyo3",
+ "pyo3-build-config",
  "serde",
  "serde_json",
  "tokio",
