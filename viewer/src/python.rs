@@ -1,6 +1,6 @@
 //! The embedded Python interpreter (PyO3), for the parts of Netvisualizer
 //! that stay in Python: the MAC vendor lookup (Milestone 6) and the
-//! SSH/Telnet console (Milestone 11). Their code lives in the `netvisualizer`
+//! SSH/Telnet console (Milestone 13). Their code lives in the `netvisualizer`
 //! package at the repo root.
 //!
 //! The binary links the system's libpython (the one `.venv` was made from),
