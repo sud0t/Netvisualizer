@@ -1,10 +1,14 @@
-//! Turns the map document into the scene: one sphere entity per host (sized by
-//! role, coloured by role and status) and one line per link.
+//! Turns the map document into the scene: one entity per host, drawn as its
+//! model (models.rs: the terminal for the scanner, a rack for the rest),
+//! sized by role and standing on the floor at the host's x and z, and one
+//! line per link, in the colour of the host it leads to (its role, or grey
+//! when it is down).
 //!
-//! `rebuild` runs whenever the [`MapDocument`] resource changes and replaces
-//! every node, which is cheap at LAN scale (a /24 is a few hundred entities).
-//! Links are drawn with gizmos each frame from the resolved endpoints, so there
-//! is nothing to tear down when the map changes.
+//! `rebuild` runs whenever the [`MapDocument`] resource changes (or the
+//! models come in) and replaces every node, which is cheap at LAN scale (a
+//! /24 is a few hundred nodes of a few parts each). Links are drawn with
+//! gizmos each frame from the resolved endpoints, so there is nothing to
+//! tear down when the map changes.
 
 use std::collections::HashMap;
 
@@ -13,29 +17,41 @@ use bevy::prelude::*;
 
 use crate::ViewerSet;
 use crate::map::{Host, MapDoc, Role, Status};
+use crate::models::{ModelKind, Models};
 use crate::theme;
 
-/// World-unit gap between the top of a sphere and its label.
+/// The floor every node stands on, where the grid is drawn: the layout's
+/// plane (layout.rs).
+pub const FLOOR_Y: f32 = 0.0;
+/// World-unit gap between the top of a node's sphere and its label.
 pub const LABEL_GAP: f32 = 0.45;
 /// Hosts without a position go on a ring this far outside the positioned ones.
 const FALLBACK_RING_GAP: f32 = 6.0;
-/// Hovered / selected spheres grow by this much.
+/// Hovered / selected nodes grow by this much.
 pub const HIGHLIGHT_SCALE: f32 = 1.12;
-const SPHERE_SECTORS: u32 = 32;
-const SPHERE_STACKS: u32 = 20;
 
-/// Sphere radius per role: the scanner is the biggest, then the gateway
-/// and the routers.
+/// A node's radius per role: the scanner is the biggest, then the gateway
+/// and the routers. Its model fits inside a sphere of this radius that rests
+/// on the floor (models.rs), which is what the picker tests and the label
+/// sits on.
 pub fn node_radius(role: Role) -> f32 {
     match role {
-        Role::Scanner => 1.1,
-        Role::Gateway => 0.85,
-        Role::Router => 0.75,
-        Role::Host => 0.6,
+        Role::Scanner => 1.45,
+        Role::Gateway => 1.15,
+        Role::Router => 1.0,
+        Role::Host => 0.8,
     }
 }
 
-/// Which colour a node takes: its role, unless it is down.
+/// Where a node's entity goes: the centre of its sphere, which rests on the
+/// floor under the host's x and z (a map saved when the outer rings were
+/// raised stands on the floor too), its radius times `scale` up.
+pub fn node_centre(position: Vec3, radius: f32, scale: f32) -> Vec3 {
+    Vec3::new(position.x, FLOOR_Y + radius * scale, position.z)
+}
+
+/// The colour of the link into a node and of its label: its role, unless it
+/// is down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ColorKey {
     Scanner,
@@ -65,14 +81,6 @@ impl ColorKey {
             ColorKey::Down => theme::ROLE_DOWN,
         }
     }
-
-    const ALL: [ColorKey; 5] = [
-        ColorKey::Scanner,
-        ColorKey::Gateway,
-        ColorKey::Router,
-        ColorKey::Host,
-        ColorKey::Down,
-    ];
 }
 
 /// How a node is currently drawn.
@@ -85,16 +93,15 @@ pub enum NodeState {
 }
 
 impl NodeState {
-    /// How much of its own colour a sphere glows with.
-    fn emissive(self) -> f32 {
+    /// How much brighter than as made a node's model is drawn: its colours
+    /// and its glow (screens, lights) times this.
+    pub fn lift(self) -> f32 {
         match self {
-            NodeState::None => 0.28,
-            NodeState::Hover => 0.75,
-            NodeState::Selected => 0.95,
+            NodeState::None => 1.0,
+            NodeState::Hover => 1.6,
+            NodeState::Selected => 2.0,
         }
     }
-
-    const ALL: [NodeState; 3] = [NodeState::None, NodeState::Hover, NodeState::Selected];
 }
 
 /// The latest map: loaded once from `--json`, or replaced by scan.rs after
@@ -102,26 +109,14 @@ impl NodeState {
 #[derive(Resource, Debug, Default)]
 pub struct MapDocument(pub Option<MapDoc>);
 
-/// Shared resources: one unit sphere scaled per node and one material per
-/// (state, colour) pair, so highlighting a node is a handle swap, not a clone.
-#[derive(Resource)]
-pub struct GraphAssets {
-    pub sphere: Handle<Mesh>,
-    pub materials: HashMap<(NodeState, ColorKey), Handle<StandardMaterial>>,
-}
-
-impl GraphAssets {
-    pub fn material(&self, state: NodeState, key: ColorKey) -> Handle<StandardMaterial> {
-        self.materials[&(state, key)].clone()
-    }
-}
-
 /// One per host entity: what the rest of the viewer needs to know about it.
+/// The entity holds the node's place (the centre of its sphere) and size;
+/// its children are the parts of its model.
 #[derive(Component, Debug)]
 pub struct Node {
     pub id: String,
     /// The host's label, or its id when it has none: what the label above
-    /// the sphere says.
+    /// the node says.
     pub label: String,
     pub key: ColorKey,
     pub radius: f32,
@@ -133,8 +128,9 @@ pub struct Node {
 pub struct Graph {
     pub nodes: HashMap<String, Entity>,
     pub positions: HashMap<String, Vec3>,
-    /// Resolved link endpoints; links to unknown hosts are dropped, not fatal.
-    pub links: Vec<(Vec3, Vec3)>,
+    /// Resolved link endpoints and the colour of the host each leads to (its
+    /// target); links to unknown hosts are dropped, not fatal.
+    pub links: Vec<(Vec3, Vec3, ColorKey)>,
     pub bounds: Bounds,
     pub host_count: usize,
     pub link_count: usize,
@@ -189,54 +185,27 @@ pub struct GraphPlugin;
 
 impl Plugin for GraphPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Graph>()
-            .add_systems(Startup, setup_assets)
-            .add_systems(
-                Update,
-                (
-                    rebuild.in_set(ViewerSet::Build),
-                    draw_links.in_set(ViewerSet::Draw),
-                ),
-            );
+        app.init_resource::<Graph>().add_systems(
+            Update,
+            (
+                rebuild.in_set(ViewerSet::Build),
+                draw_links.in_set(ViewerSet::Draw),
+            ),
+        );
     }
-}
-
-fn setup_assets(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let sphere = meshes.add(Sphere::new(1.0).mesh().uv(SPHERE_SECTORS, SPHERE_STACKS));
-    let mut table = HashMap::new();
-    for key in ColorKey::ALL {
-        let color = key.color();
-        for state in NodeState::ALL {
-            let material = materials.add(StandardMaterial {
-                base_color: color,
-                emissive: color.to_linear() * state.emissive(),
-                perceptual_roughness: 0.4,
-                metallic: 0.15,
-                ..default()
-            });
-            table.insert((state, key), material);
-        }
-    }
-    commands.insert_resource(GraphAssets {
-        sphere,
-        materials: table,
-    });
 }
 
 /// Despawn every node, spawn the new ones, resolve links and recompute the
-/// bounds. Runs only when the document resource changed.
+/// bounds. Runs only when the document resource changed, or when the models
+/// came in (a map that arrived before them waits for them).
 fn rebuild(
     mut commands: Commands,
     doc: Res<MapDocument>,
-    assets: Res<GraphAssets>,
+    models: Res<Models>,
     mut graph: ResMut<Graph>,
     existing: Query<Entity, With<Node>>,
 ) {
-    if !doc.is_changed() {
+    if !(doc.is_changed() || models.is_changed()) || !models.ready() {
         return;
     }
     let Some(doc) = &doc.0 else {
@@ -248,11 +217,14 @@ fn rebuild(
     let positions = resolve_positions(&doc.hosts);
 
     let mut next = Graph::default();
+    let mut keys: HashMap<&str, ColorKey> = HashMap::new();
     let mut max_radius: f32 = 0.0;
     for (host, position) in doc.hosts.iter().zip(positions) {
         let role = host.role();
         let key = ColorKey::of(host);
         let radius = node_radius(role);
+        let centre = node_centre(position, radius, 1.0);
+        let model = models.get(ModelKind::of(role));
         let entity = commands
             .spawn((
                 Node {
@@ -262,25 +234,31 @@ fn rebuild(
                     radius,
                     state: NodeState::None,
                 },
-                Mesh3d(assets.sphere.clone()),
-                MeshMaterial3d(assets.material(NodeState::None, key)),
-                Transform::from_translation(position).with_scale(Vec3::splat(radius)),
+                Transform::from_translation(centre).with_scale(Vec3::splat(radius)),
+                Visibility::default(),
             ))
+            .with_children(|node| {
+                for part in &model.parts {
+                    node.spawn(part.bundle(key == ColorKey::Down));
+                }
+            })
             .id();
         next.nodes.insert(host.id.clone(), entity);
-        next.positions.insert(host.id.clone(), position);
-        next.bounds.expand_by_point(position);
+        next.positions.insert(host.id.clone(), centre);
+        next.bounds.expand_by_point(centre);
+        keys.insert(&host.id, key);
         max_radius = max_radius.max(radius);
     }
     for link in &doc.links {
-        if let (Some(a), Some(b)) = (
+        if let (Some(a), Some(b), Some(key)) = (
             next.positions.get(&link.source),
             next.positions.get(&link.target),
+            keys.get(link.target.as_str()),
         ) {
-            next.links.push((*a, *b));
+            next.links.push((*a, *b, *key));
         }
     }
-    // The bounds: a point box for an empty map, then room for the spheres
+    // The bounds: a point box for an empty map, then room for the nodes
     // themselves and for the labels above the top row.
     if next.bounds.is_empty() {
         next.bounds = Bounds {
@@ -296,32 +274,28 @@ fn rebuild(
     *graph = next;
 }
 
-/// Hover and selection look: brighter material, slightly bigger sphere. A
-/// handle swap, not a material clone.
-pub fn set_state(
-    assets: &GraphAssets,
-    node: &mut Node,
-    transform: &mut Transform,
-    material: &mut MeshMaterial3d<StandardMaterial>,
-    state: NodeState,
-) {
+/// Hover and selection: the node a little bigger, growing up from the floor
+/// rather than into it. Returns whether the state changed, in which case the
+/// caller gives the node's parts their materials for it
+/// ([`crate::models::PartLooks`]).
+pub fn set_state(node: &mut Node, transform: &mut Transform, state: NodeState) -> bool {
     if node.state == state {
-        return;
+        return false;
     }
     node.state = state;
-    material.0 = assets.material(state, node.key);
     let scale = if state == NodeState::None {
         1.0
     } else {
         HIGHLIGHT_SCALE
     };
     transform.scale = Vec3::splat(node.radius * scale);
+    transform.translation = node_centre(transform.translation, node.radius, scale);
+    true
 }
 
 fn draw_links(graph: Res<Graph>, mut gizmos: Gizmos) {
-    let color = theme::LINK.with_alpha(theme::LINK_OPACITY);
-    for &(a, b) in &graph.links {
-        gizmos.line(a, b, color);
+    for &(a, b, key) in &graph.links {
+        gizmos.line(a, b, key.color().with_alpha(theme::LINK_OPACITY));
     }
 }
 
@@ -420,6 +394,18 @@ mod tests {
                 ColorKey::Down
             ]
         );
+    }
+
+    #[test]
+    fn a_node_rests_on_the_floor_whatever_its_height_in_the_map() {
+        let raised = Vec3::new(4.0, 1.5, -2.0);
+        assert_eq!(
+            node_centre(raised, 0.8, 1.0),
+            Vec3::new(4.0, FLOOR_Y + 0.8, -2.0)
+        );
+        // Grown by a hover, its sphere still rests on the floor.
+        let grown = node_centre(raised, 0.8, HIGHLIGHT_SCALE);
+        assert!((grown.y - (FLOOR_Y + 0.8 * HIGHLIGHT_SCALE)).abs() < 1e-6);
     }
 
     #[test]

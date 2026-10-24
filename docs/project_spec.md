@@ -5,24 +5,45 @@ You are going to be handling the graphics side of this project (Rust), do not to
 
 *(2026-10-21: Kyler gave Claude full access to the network backend for the move to Rust.)*
 
+## Rough ideas 
 
-## Features
-- Able to move around 3D space with wasd
-- Host name should be preffered over IP address (if one was provided)
-- Each host is a node that can be clicked on to reveal more information (such as open ports, the ports type, etc)
+### Graphics
+- **Use different color connection lines to differentiate between device types instead of using the color of the spheres/models** 
+- Upon scan instead of nodes/assets just popping into existence have them come up from the ground with an animation or spawn them out of view and have them move towards their end position and have the connection lines gradually traced to them after they've loaded, and scan progress bar takes into account the animation and the scan time
+- Make the connection lines an animated 3D sine wave
+- **Find better way to display connections instead of lines, something that would result in less clutter, maybe a different default topology**
 
-## Feature requests
+### UI
+- Currently following a terminal style look
+- Host information is displayed in a small box on the bottom right (change it or add option to pop out a window or something for a better view or in case of more info)
+- Currently all options (Trace, UDP, TCP, etc...) are displayed at all times above the scan bar (make them drop down/collapse)
+- Give option to manually name hosts (the manual name would take precedence over every other)
+- Make the [SCAN] button smaller
+
+### Features
+- Add option to scan FQDN not just IP address
+- Text renders out of text input box
+- Clear button does not clear hosts from viewer
+- Hovering over host details should highlight the given field and left click should copy to clipboard
+
+### Python
+- build a console in the app that gives access with proper features and allows for SSH or Telnet connections to hosts that allow it
+
+### Rust
+- Implement VLAN hopping if system is on a switch trunk port or has full remote access to a switch trunk port
+- Packet/Frame crafter that allows you to build and send custom frames/packets to  host(s)
+
 
 ## TODO, in order
 New features come after migration steps; every step leaves the program working. Requests under "Feature requests" get planned into this list, and each is deleted from there once it is done.
 
-1. **Milestone 12: one action per operation.** Nothing touches the network on its own: every operation is a user action, a button in the window or a flag on the command line. The scan dock grows into a toolbox, the fan of toggles a row of operations with a button each: Ping sweep and ARP sweep take a network; Traceroute, Names, TCP ports and UDP ports work on the hosts already on the map (all of them, or the selected one); each has its options beside it, and its own progress and Cancel while it runs. The host list moves into the viewer and each action is a job on it; results already merge into the map that is there (see Scanning), so a map builds up step by step and `--save` keeps it. `--scan` stays as the shorthand for today's chain of stages; a flag per operation queues the same actions at start-up, in the order given. scan.rs's `run` (one long function, allowed as such) breaks into those jobs.
+1. This was done during the UI refactor->**Milestone 12: one action per operation.** Nothing touches the network on its own: every operation is a user action, a button in the window or a flag on the command line. The scan dock grows into a toolbox, the fan of toggles a row of operations with a button each: Ping sweep and ARP sweep take a network; Traceroute, Names, TCP ports and UDP ports work on the hosts already on the map (all of them, or the selected one); each has its options beside it, and its own progress and Cancel while it runs. The host list moves into the viewer and each action is a job on it; results already merge into the map that is there (see Scanning), so a map builds up step by step and `--save` keeps it. `--scan` stays as the shorthand for today's chain of stages; a flag per operation queues the same actions at start-up, in the order given. scan.rs's `run` (one long function, allowed as such) breaks into those jobs.
 2. **Milestone 13: SSH/Telnet console.** For hosts with port 22 or 23 open, a console opened from the details card: asyncssh (and a telnet client) through the bridge, a terminal pane in the UI.
 3. **Milestone 14: IPv6, with Neighbor Discovery built by hand.** NDP (RFC 4861) is IPv6's ARP, carried in ICMPv6: a Neighbor Solicitation (type 135) to the target's solicited-node group `ff02::1:ffXX:XXXX` (its last 24 bits), with our Source Link-Layer Address option (type 1), and the Neighbor Advertisement (type 136) back with the Target Link-Layer Address option (type 2), the host's MAC. Both ride a raw ICMPv6 socket (`AF_INET6`/`SOCK_RAW`/`IPPROTO_ICMPV6`: root or `CAP_NET_RAW`, as the unprivileged ICMPv6 datagram socket passes echo only; the kernel fills in the ICMPv6 checksum) from the interface's link-local address with hop limit 255 (a host drops NDP with any other), `ICMP6_FILTER` letting only type 136 in; the frames are built and read by hand as in arp.rs. A /64 cannot be swept (2^64 addresses), so the targets come from an echo request to the all-nodes group `ff02::1` (most hosts answer from their link-local address), from the kernel's neighbour cache (netlink `RTM_GETNEIGH`, what `ip -6 neigh` prints; IPv6 has no `/proc/net/arp`), and from the IPv4 hosts' MACs. A host has several IPv6 addresses (link-local, global, temporary privacy ones), so the MAC is what makes a dual-stack host one node: `Host` gains its other addresses (`Host.ip` is already an `IpAddr`), the sweep's `Ipv4Net` becomes an `IpNet`, on-link means the interface's prefix, and routers come from Router Advertisements (type 134) or `/proc/net/ipv6_route`. Traceroute (ICMPv6 time exceeded, `IPV6_RECVERR`) and the port scans follow once the hosts exist.
 4. **Milestone 15: device types.** A type per host (router, phone, printer, NAS, computer, …) worked out from what the scan knows: the role, the vendor, the open ports and their services, the hostname. It heads the label (hostname, else type, else vendor, else address) and gives each node a look of its own.
 4. **Milestone 15: device identification.** Each host gets a type, worked out from what the stages collect plus a few one-packet probes, and shown with its evidence so the verdict can be checked. The types: gateway or router, switch or access point, server or NAS, Windows computer, Mac, Linux computer, phone or tablet, printer, camera or NVR, media device (TV, streaming box, speaker), smart-home device, game console, virtual machine (a hypervisor OUI decides alone); anything else "unknown", with the OS family the TTL gives. The signals, besides the ports, vendor, hostname, role and locally administered bit already there: the reply's TTL, which the ICMP sweep reads past today (64 for Linux, Apple, Android and most embedded stacks, 128 for Windows, 255 for network gear, printers and lwIP; on the link it arrives untouched); the UDP scan's empty datagram to 137, 161, 5353 and 1900 replaced by the real question (a NetBIOS node-status query; SNMP `GET` of sysDescr and sysObjectID with community `public`; an mDNS query for the services list and the device-info, AirPlay, Chromecast, IPP and HomeKit text records; SSDP `M-SEARCH`, whose `LOCATION` XML names manufacturer and model), so an answer settles the port as open at once and names the device; one multicast mDNS, SSDP and WS-Discovery query per scan, listened to for a second or two while the TCP scan runs, hears every device at once (a guest network filters multicast; the unicast questions cover that); and the banners on open ports: the SSH greeting (dropbear means embedded, `ROSSSH` MikroTik) and the HTTP title and `Server` header on 80 (443 waits until TLS is worth a dependency). Probes and parsers go in `identify.rs`, built and read by hand like ICMP and ARP (mDNS and NetBIOS are DNS-shaped, SSDP is text, SNMP needs a BER decoder for one string); the UDP scan sends its questions, and Identify asks the hosts the UDP scan did not. The verdict is a weighted score per type from a rules table in `assets/` (data, like the vendor list): a hard signal (a model string, a hypervisor OUI, "iPhone" in a name) decides alone, soft ones (TTL, vendor, a single port) break ties, and the margin is the confidence. Until it settles: `extra.device`, `extra.device_evidence` ("port 9100, Brother, IPP", as the card shows it) and `extra.ttl`; the sidebar filter matches the type. One operation in the toolbox (`--identify`, an Identify button), after ports and vendors. Manners: the NetBIOS and SNMP questions go only to hosts on the scanner's own link (`is_local == Some(true)`); beyond it those two ports keep the empty datagram, unless the program was started with `--bypass-scan-permissions`, a command-line flag with no checkbox in the card (a choice made on purpose, each run), which lets them ask anywhere; mDNS, SSDP and WS-Discovery are link-local by nature. Timing stays out of the verdict until the sweeps record reply times; the one timing signal worth having then is a first reply hundreds of milliseconds late followed by quick ones, a battery device on Wi-Fi.
 
-Done: Milestones 1–4 (the viewer) and 5 (the networking backend in Rust), 2026-10-21; 6 (MACs from the kernel's ARP table, vendor names through pandas, vendor labels), 7 (the ARP sweep on a packet socket, ping for what it cannot reach), 8 (traceroute: routers as nodes, the layout a tree), 9 (UDP ports), 10 (the scan card: Scan, options, progress, Cancel) and 11 (project cleanup: the workspace below, the lints, `python/`, `docs/`, CI), 2026-10-22; the interface rebuilt on bevy_lunex (the scan dock with Scan centre stage and every feature a toggle, the host rail, the HUD) in the Terminal look chosen from the four design options recorded in the artifact (`docs/ui_terminal_build.md` is the build brief), 2026-10-24.
+Done: Milestones 1–4 (the viewer) and 5 (the networking backend in Rust), 2026-10-21; 6 (MACs from the kernel's ARP table, vendor names through pandas, vendor labels), 7 (the ARP sweep on a packet socket, ping for what it cannot reach), 8 (traceroute: routers as nodes, the layout a tree), 9 (UDP ports), 10 (the scan card: Scan, options, progress, Cancel) and 11 (project cleanup: the workspace below, the lints, `python/`, `docs/`, CI), 2026-10-22; the interface rebuilt on bevy_lunex (the scan dock with Scan centre stage and every feature a toggle, the host rail, the HUD) in the Terminal look chosen from the four design options recorded in the artifact (`docs/ui_terminal_build.md` is the build brief), 2026-10-24; the nodes drawn as 3D models standing on the floor (a terminal for the scanner, a server rack for every other host) and the links in the role colour of the host they lead to, 2026-10-24.
 
 ## Architecture
 ```
@@ -54,6 +75,8 @@ viewer/           netvisualizer, the program (Bevy + bevy_lunex); tests/fixtures
   layout.rs       positions
   python.rs       the embedded Python (PyO3); build.rs sets its rpath
   scene.rs        camera, the sky (Bevy's atmospheric scattering; needs compute shaders, else the clear colour), sun, fog, grid, framing
+  models.rs       the node models: glTF files in viewer/assets/models (packed by scripts/pack-model.py, credited in
+                  CREDITS.txt, built into the binary), flattened into parts, fitted to the node's sphere, a look per state
   …               graph, controls, picking, panel (the host list's model), theme (colours and looks)
 python/           netvisualizer/, the package the program embeds (vendors.py), and tests/ (unittest)
 pyproject.toml    what that package imports; `uv sync` makes .venv from it (uv.lock pins the versions)
@@ -93,7 +116,8 @@ Every field but `ip` has a `#[serde(default)]`, so a map saved before a field ex
 - `extra.mac_note` marks a MAC with no vendor whose locally administered bit (0x02 of the first octet) is set: made up on the device, as phones do for privacy. The IEEE's CID blocks set that bit too, hence the lookup first.
 - `scan.type` is `arp_sweep`, `ping_sweep` or `arp_ping_sweep` (see Scanning), `demo` in the fixture.
 - Links follow the packets: `"subnet"` from the scanner to each host on its own subnet; for a host beyond it, `"route"` links along its traced path, one per router (a router the scan did not list becomes a host with role `router`); without a path, the guess, `"route"` from the gateway (from the scanner when the map has no gateway). The layout follows the links: the scanner at the origin, its hosts on rings around it (gateway first, then by address), and every further level on rings of its own straight out beyond the host it hangs off.
-- `extra.status == "down"` draws a host grey; the scan uses it for a gateway that was swept and answered neither the sweep nor, later, a traceroute passing through it.
+- `extra.status == "down"` draws a host's model dark with its lights off and its link grey; the scan uses it for a gateway that was swept and answered neither the sweep nor, later, a traceroute passing through it.
+- Every node stands on the floor (y = 0) at its `position`'s x and z, so the layout keeps y at 0; its model fits the sphere of its role's radius that rests there, which the picker tests and the label sits on. A link takes the role colour of its `target`.
 
 ## Scanning
 - Nothing touches the network until a `StartScan` message arrives: `--scan [CIDR]` sends one at start-up, and the dock's Scan button sends the same. One scan at a time, with the settings in the `ScanSettings` resource: the dock's form (`ScanForm`, seeded from the command line; every feature a toggle, the port lists remembered while theirs is off, timeout and concurrency stepping through presets) is parsed with the command line's own validators (cli.rs) into that resource. While a scan runs, the block reads Stop and the running stage and its progress (`ScanJob`) are written beside it as text (a bar of `█` and `░`), and Stop notifies a `Notify` the scan thread selects on against the stages, which drops every probe in flight; the maps sent so far stand.

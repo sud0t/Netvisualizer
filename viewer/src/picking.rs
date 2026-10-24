@@ -1,9 +1,10 @@
 //! Mouse picking: hover highlight, click to select, double click to fly to.
 //!
-//! Nodes are spheres, so every node is tested as a bounding sphere, which is
-//! exact for a sphere and cheap enough to run each frame while the pointer is
-//! over the window. The selection is remembered by host id so it survives a
-//! graph rebuild when a new map revision arrives.
+//! Every node's model fits inside a sphere of the node's radius (models.rs),
+//! so every node is tested as that sphere: a little generous round a slim
+//! rack, and cheap enough to run each frame while the pointer is over the
+//! window. The selection is remembered by host id so it survives a graph
+//! rebuild when a new map revision arrives.
 
 use bevy::color::Alpha;
 use bevy::prelude::*;
@@ -11,23 +12,24 @@ use bevy::window::PrimaryWindow;
 
 use crate::ViewerSet;
 use crate::controls::FlyControls;
-use crate::graph::{Graph, GraphAssets, Node, NodeState, set_state};
+use crate::graph::{Graph, Node, NodeState, set_state};
+use crate::models::PartLooks;
 use crate::scene::MainCamera;
 use crate::theme;
 use crate::ui::UiInput;
 
 /// A press that moved further than this is a drag, not a click.
 const CLICK_SLOP_PX: f32 = 5.0;
-/// Pick radius / sphere radius: small nodes are easier to hit.
+/// Pick radius / node radius: small nodes are easier to hit.
 const PICK_SLACK: f32 = 1.2;
-/// Selection ring radius / sphere radius.
+/// Selection ring radius / node radius.
 const RING_SCALE: f32 = 1.45;
 /// Two clicks closer than this in time (and within the slop) are a double click.
 const DOUBLE_CLICK_SECS: f32 = 0.4;
 const RING_SEGMENTS: u32 = 48;
 const RING_WIDTH_PX: f32 = 2.5;
 
-/// How far from a host a fly-to stops: bigger spheres, more room.
+/// How far from a host a fly-to stops: bigger nodes, more room.
 pub fn fly_distance(radius: f32) -> f32 {
     4.0 + radius * 6.0
 }
@@ -126,7 +128,7 @@ fn configure_ring_gizmos(mut store: ResMut<GizmoConfigStore>) {
 }
 
 /// The hit nearest to the ray origin, among nodes tested as spheres a little
-/// bigger than drawn.
+/// bigger than the one their model fits in.
 pub fn pick_at<'a>(
     cursor: Vec2,
     camera: &Camera,
@@ -277,23 +279,19 @@ fn clicks(
     }
 }
 
-/// Hover and selection look: brighter material, slightly bigger sphere.
+/// Hover and selection look: a brighter model, a little bigger. Each part
+/// swaps to its material for the state, made up front (models.rs).
 fn apply_states(
     picker: Res<Picker>,
     graph: Res<Graph>,
-    assets: Res<GraphAssets>,
-    mut nodes: Query<(
-        Entity,
-        &mut Node,
-        &mut Transform,
-        &mut MeshMaterial3d<StandardMaterial>,
-    )>,
+    mut nodes: Query<(Entity, &mut Node, &mut Transform, &Children)>,
+    mut parts: Query<(&PartLooks, &mut MeshMaterial3d<StandardMaterial>)>,
 ) {
     if !picker.is_changed() && !graph.is_changed() {
         return;
     }
     let selected = picker.selected_entity(&graph);
-    for (entity, mut node, mut transform, mut material) in &mut nodes {
+    for (entity, mut node, mut transform, children) in &mut nodes {
         let state = if Some(entity) == selected {
             NodeState::Selected
         } else if Some(entity) == picker.hovered {
@@ -301,7 +299,14 @@ fn apply_states(
         } else {
             NodeState::None
         };
-        set_state(&assets, &mut node, &mut transform, &mut material, state);
+        if !set_state(&mut node, &mut transform, state) {
+            continue;
+        }
+        for &part in children {
+            if let Ok((looks, mut material)) = parts.get_mut(part) {
+                material.0 = looks.get(state);
+            }
+        }
     }
 }
 

@@ -12,7 +12,7 @@ use bevy::window::{PrimaryWindow, WindowResized};
 
 use crate::ViewerSet;
 use crate::controls::FlyControls;
-use crate::graph::{Bounds, Graph};
+use crate::graph::{Bounds, FLOOR_Y, Graph};
 use crate::panel::Panel;
 use crate::theme;
 
@@ -29,8 +29,6 @@ const MAJOR_EVERY: i64 = 5;
 /// faded segments each, is plenty of gizmo work per frame. Only the lines
 /// within the fog are drawn, so the cap matters to a map spread very wide.
 const GRID_LINES_EACH_WAY_MAX: i64 = 300;
-/// The grid floats a little below the lowest ring.
-const FLOOR_Y: f32 = -3.0;
 /// Vertices per grid line, so the distance fade can vary along the line.
 const GRID_SEGMENTS: u32 = 32;
 const FOV_DEGREES: f32 = 60.0;
@@ -83,7 +81,7 @@ pub struct ScenePlugin;
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ClearColor(theme::SCENE_BG))
-            // A pale sky-blue ambient light, so the sides of the spheres that
+            // A pale sky-blue ambient light, so the sides of the models that
             // face away from the sun are lit too.
             .insert_resource(GlobalAmbientLight {
                 color: Color::srgb_u8(0xbf, 0xd4, 0xff),
@@ -133,7 +131,7 @@ fn setup(mut commands: Commands, mut mediums: ResMut<Assets<ScatteringMedium>>) 
             far: 2000.0,
             ..default()
         }),
-        // No tone mapping, so the role colours on the spheres come out as the
+        // No tone mapping, so the role colours on the links come out as the
         // swatches in the legend and the host list. Debanding only works after
         // tone mapping, so it is off too (Bevy warns about the pair otherwise).
         Tonemapping::None,

@@ -10,7 +10,7 @@
 //!   before, so their links fan out away from the middle; and so on, level
 //!   by level, for as deep as the paths go.
 //!
-//! y is up; each ring floats a little higher than the one inside it.
+//! y is up; every ring lies on the floor (y = 0), where the nodes stand.
 //! (Moved here from `graphics/layout.py`.)
 
 use std::collections::{HashMap, VecDeque};
@@ -25,8 +25,6 @@ pub const SPACING: f32 = 3.0;
 pub const MIN_RADIUS: f32 = 8.0;
 /// Radial distance between rings.
 pub const RING_GAP: f32 = 6.0;
-/// How much higher each ring is than the one inside it.
-pub const RING_RISE: f32 = 1.5;
 
 /// How many hosts go on each ring, innermost first: as many as fit with
 /// [`SPACING`] between them, the last ring taking the rest.
@@ -149,7 +147,6 @@ fn place_on_rings(
     for (ring, count) in ring_plan(order.len()).into_iter().enumerate() {
         let radius = MIN_RADIUS + ring as f32 * RING_GAP;
         outermost = radius;
-        let y = centre[1] + ring as f32 * RING_RISE;
         let step = TAU / count as f32;
         let offset = if ring % 2 == 1 { step / 2.0 } else { 0.0 };
         for slot in 0..count {
@@ -157,7 +154,7 @@ fn place_on_rings(
             let index = *next.next().expect("the plan places every host");
             positions[index] = [
                 round3(centre[0] + radius * angle.cos()),
-                y,
+                centre[1],
                 round3(centre[2] + radius * angle.sin()),
             ];
         }
@@ -246,8 +243,8 @@ mod tests {
         radii.dedup();
         assert!(radii.len() > 1, "{radii:?}");
         assert!(
-            positions[1..].iter().any(|p| p[1] == RING_RISE),
-            "outer rings float higher"
+            positions.iter().all(|p| p[1] == 0.0),
+            "every ring lies on the floor"
         );
     }
 

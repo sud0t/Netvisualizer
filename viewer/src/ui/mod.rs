@@ -6,7 +6,7 @@
 //!
 //! The pieces: hud.rs (the status box and the legend), dock.rs (the Scan
 //! block and its toggles), rail.rs (the host table and the details dump),
-//! labels.rs (the names over the spheres), help.rs (the controls overlay),
+//! labels.rs (the names over the nodes), help.rs (the controls overlay),
 //! tooltip.rs; and under them shape.rs (the one shader every box is painted
 //! with), widgets.rs (text, buttons, toggles), `text_input.rs` (the fields)
 //! and pick.rs (what the pointer is over). This file wires them up and keeps the [`UiInput`] flags that
@@ -132,7 +132,7 @@ struct PointerState {
     pressed_on_ui: bool,
 }
 
-/// The entity in whose name the pointing hand is requested while a sphere
+/// The entity in whose name the pointing hand is requested while a node
 /// is under the pointer (lunex's cursor queue wants a requester).
 #[derive(Component)]
 struct HoverCursor;
@@ -257,8 +257,8 @@ pub fn root_point(viewport: Vec2, size: Vec2) -> Vec2 {
 }
 
 /// The role colours of the host list's dots and the legend's swatches
-/// (unknown roles and down hosts use the host colour there; only the 3D
-/// spheres turn grey).
+/// (unknown roles and down hosts use the host colour there; only the links
+/// and labels in the 3D view turn grey).
 pub fn role_color(role: Role) -> Color {
     match role {
         Role::Scanner => theme::ROLE_SCANNER,

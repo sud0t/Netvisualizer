@@ -140,3 +140,15 @@ pyproject.toml    its dependencies; `uv sync` makes .venv from it
 docs/             the project spec
 assets/           data files: the MAC vendor list (maclookup.app's CSV export)
 ```
+
+## Credits
+
+The 3D models in `viewer/assets/models` are licensed under CC-BY 4.0:
+"Low-poly cyberpunk street terminal" by
+[Biomonger](https://sketchfab.com/Biomonger)
+([source](https://sketchfab.com/3d-models/low-poly-cyberpunk-street-terminal-f7940b6aae294a72866129a96ec8c980))
+and "Server Rack" by [Spellkaze](https://sketchfab.com/Spellkaze)
+([source](https://sketchfab.com/3d-models/server-rack-62f6779cb7e448b19aaf58544c3c7218)),
+with their textures shrunk and the files packed by `scripts/pack-model.py`
+(details in `viewer/assets/models/CREDITS.txt`). The font is JetBrains Mono
+(SIL Open Font License, `viewer/assets/fonts`).

@@ -2,7 +2,7 @@
 //! status line, then the fly speed and the key hints `[?] help`, `[/]
 //! filter` and `[R] reset`, which are buttons too. A thin phosphor line
 //! along the box's bottom edge fills while a scan runs. The legend, under
-//! it: what the colours mean.
+//! it: what the colours of the links (and labels) mean.
 
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
@@ -32,9 +32,10 @@ const HUD_HEIGHT: f32 = 2.0 * PAD.y + 2.0 * ROW_H + ROW_GAP;
 const STATUS_MIN_PX: f32 = 120.0;
 const STATUS_MAX_PX: f32 = 560.0;
 const HUD_FIXED_PX: f32 = 200.0;
-/// The legend's box is 28 px tall; its swatches are 8 px squares.
+/// The legend's box is 28 px tall; its swatches are short lines, like the
+/// links they stand for.
 const LEGEND_HEIGHT: f32 = 28.0;
-const SWATCH: f32 = 8.0;
+const SWATCH: Vec2 = Vec2::new(14.0, 2.0);
 
 #[derive(Component)]
 struct StatusText;
@@ -332,7 +333,10 @@ fn spawn_legend(
                             .with_children(|item| {
                                 item.spawn((
                                     Name::new("swatch"),
-                                    UiLayout::flow().width(Ab(SWATCH)).height(Ab(SWATCH)).pack(),
+                                    UiLayout::flow()
+                                        .width(Ab(SWATCH.x))
+                                        .height(Ab(SWATCH.y))
+                                        .pack(),
                                     Pickable::IGNORE,
                                 ))
                                 .with_children(|swatch| {

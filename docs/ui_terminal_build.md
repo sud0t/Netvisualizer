@@ -144,7 +144,9 @@ Clear; `map.forget(id)` drops one host. `ScanJob` exists while a scan runs
 
 Everything is monospace text in near-black boxes with hard corners, lit in
 phosphor green, with scanlines over the whole window. The role colours
-stay as they were so the table, the legend and the spheres agree.
+stay as they were so the table, the legend and the links agree (since
+2026-10-24 the nodes are models in their own materials, and each link
+takes the role colour of the host it leads to).
 
 ### Tokens (`theme.rs`)
 
@@ -169,8 +171,8 @@ stay as they were so the table, the legend and the spheres agree.
 | `ROLE_SCANNER` cyan `#22d3ee`, `ROLE_GATEWAY` amber `#f59e0b`, `ROLE_ROUTER` violet `#c084fc`, `ROLE_HOST` blue `#60a5fa` | unchanged | Roles; `ROLE_DOWN` is a dull green-grey `#5b6f63` |
 | `SCENE_BG` | `#040705` | The clear colour, the planet's surface under the sky, the fog |
 | `GRID_LINE` / `GRID_AXIS` | `#0f3d24` / `#1c7a46` at `GRID_OPACITY` 0.6 | The grid floor |
-| `LINK` | `#2f945a` at `LINK_OPACITY` 0.55 | Links between hosts |
-| `SELECTION` | phosphor | The ring round the selected sphere |
+| role colour | at `LINK_OPACITY` 0.55 | Links between hosts, each in the colour of the host it leads to (`LINK` `#2f945a` is gone) |
+| `SELECTION` | phosphor | The ring round the selected node |
 
 Sizes: `EDGE` 10 (panels from the window edges), all radii 0,
 `PANEL_GLOW` 8 px, `CHIP_GLOW` 4 px, `CHIP_PAD_X` 8 px,

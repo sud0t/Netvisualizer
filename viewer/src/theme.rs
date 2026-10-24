@@ -6,10 +6,12 @@
 //! The interface is a terminal: one monospace face, phosphor green on
 //! near-black boxes with hard corners and a faint glow, scanlines over the
 //! whole window. The scene under it is the same screen: a near-black floor
-//! with the grid and the links ruled in dim phosphor, the fog the colour
-//! of the floor, the selection ring lit. The role colours (cyan, amber,
-//! violet, blue) stay as they are so the host table and the legend still
-//! match the spheres, and a down host goes a dull green-grey.
+//! with the grid ruled in dim phosphor, the fog the colour of the floor,
+//! the selection ring lit. The hosts are drawn as their models, in the
+//! models' own materials; what a host is shows in the colour of the link
+//! that leads to it, its role colour (cyan, amber, violet, blue, the same
+//! in the host table, the labels and the legend), and a down host's link
+//! goes a dull green-grey.
 
 use bevy::prelude::Color;
 
@@ -22,9 +24,7 @@ pub const SCENE_BG: Color = Color::srgb_u8(0x04, 0x07, 0x05);
 /// The grid floor: dim phosphor, the axes a little brighter.
 pub const GRID_LINE: Color = Color::srgb_u8(0x0f, 0x3d, 0x24);
 pub const GRID_AXIS: Color = Color::srgb_u8(0x1c, 0x7a, 0x46);
-/// The links between hosts.
-pub const LINK: Color = Color::srgb_u8(0x2f, 0x94, 0x5a);
-/// The ring round the selected sphere: the phosphor.
+/// The ring round the selected node: the phosphor.
 pub const SELECTION: Color = Color::srgb_u8(0x39, 0xff, 0x88);
 
 pub const ROLE_SCANNER: Color = Color::srgb_u8(0x22, 0xd3, 0xee);
@@ -35,7 +35,7 @@ pub const ROLE_DOWN: Color = Color::srgb_u8(0x5b, 0x6f, 0x63);
 
 /// Opacity of the grid floor's lines.
 pub const GRID_OPACITY: f32 = 0.6;
-/// Opacity of link lines.
+/// Opacity of link lines (each in the role colour of the host it leads to).
 pub const LINK_OPACITY: f32 = 0.55;
 
 // --- Text -------------------------------------------------------------------

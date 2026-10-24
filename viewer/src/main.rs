@@ -25,6 +25,7 @@ mod controls;
 mod graph;
 mod layout;
 mod map;
+mod models;
 mod panel;
 mod picking;
 mod python;
@@ -49,6 +50,7 @@ use crate::cli::Args;
 use crate::controls::{ControlsPlugin, command_modifier_held};
 use crate::graph::{Graph, GraphPlugin, MapDocument};
 use crate::map::{CONTRACT_VERSION, MapDoc};
+use crate::models::ModelsPlugin;
 use crate::panel::{Panel, PanelPlugin};
 use crate::picking::{Picker, PickingPlugin, SelectHost};
 use crate::scan::{ScanPlan, ScanPlugin, StartScan};
@@ -189,6 +191,7 @@ fn viewer(verbose: bool) -> App {
     )
     .add_plugins((
         ScenePlugin,
+        ModelsPlugin,
         GraphPlugin,
         ControlsPlugin,
         PickingPlugin,

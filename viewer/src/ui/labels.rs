@@ -1,4 +1,4 @@
-//! The host labels: one line of text in a box over each sphere, following
+//! The host labels: one line of text in a box over each node, following
 //! it on screen, fading with the fog, brighter when hovered and framed when
 //! selected. They live on a layer under every panel, so the rail covers
 //! them, and nearer labels draw over farther ones.
@@ -121,7 +121,7 @@ fn spawn_layer(mut commands: Commands, root: Res<UiRoot>) {
     });
 }
 
-/// A new graph has new sphere entities: give each a label.
+/// A new graph has new node entities: give each a label.
 #[allow(clippy::too_many_arguments)] // a Bevy system lists what it reads
 fn sync_labels(
     mut commands: Commands,
@@ -180,7 +180,7 @@ fn sync_labels(
     }
 }
 
-/// Every frame: each label sits bottom-centred just above its sphere, as
+/// Every frame: each label sits bottom-centred just above its node, as
 /// opaque as the fog leaves it, nearer ones above farther ones.
 #[allow(clippy::too_many_arguments)] // a Bevy system lists what it reads
 fn place_labels(
@@ -232,7 +232,8 @@ fn place_labels(
             hide();
             continue; // lost in the fog
         }
-        // A fixed gap above the top of the sphere.
+        // A fixed gap above the top of the node's sphere (its model fits
+        // inside it).
         let anchor = node_transform.translation + Vec3::Y * (node.radius + LABEL_GAP);
         let Ok(screen) = camera.world_to_viewport(&camera_global, anchor) else {
             hide();

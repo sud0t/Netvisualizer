@@ -1141,7 +1141,7 @@ fn submit_filter(
     }
 }
 
-/// A selection made elsewhere (a click on a sphere, F, the filter) scrolls
+/// A selection made elsewhere (a click on a node, F, the filter) scrolls
 /// its row into view, no further than needed.
 fn keep_selection_in_view(
     picker: Res<Picker>,
