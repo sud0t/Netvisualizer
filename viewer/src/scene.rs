@@ -25,14 +25,19 @@ const FRAME_MARGIN: f32 = 1.08;
 /// World units per grid cell; major lines every `MAJOR_EVERY` cells.
 const GRID_CELL: f32 = 5.0;
 const MAJOR_EVERY: i64 = 5;
-/// The grid stops growing with the fog here: 201 lines each way, 33
-/// faded segments each, is already plenty of gizmo work per frame.
-const GRID_LINES_EACH_WAY_MAX: i64 = 100;
+/// The grid stops growing with the fog here: 601 lines each way, 33
+/// faded segments each, is plenty of gizmo work per frame. Only the lines
+/// within the fog are drawn, so the cap matters to a map spread very wide.
+const GRID_LINES_EACH_WAY_MAX: i64 = 300;
 /// The grid floats a little below the lowest ring.
 const FLOOR_Y: f32 = -3.0;
 /// Vertices per grid line, so the distance fade can vary along the line.
 const GRID_SEGMENTS: u32 = 32;
 const FOV_DEGREES: f32 = 60.0;
+/// How far the fog reaches, as a multiple of the distance the framed map
+/// alone would need: the fog starts this many times the distance to the
+/// map's far side, so the grid runs on well past the hosts.
+const FOG_REACH: f32 = 3.0;
 
 #[derive(Component)]
 pub struct MainCamera;
@@ -48,8 +53,8 @@ pub struct SceneSettings {
 impl Default for SceneSettings {
     fn default() -> Self {
         SceneSettings {
-            fog_near: 60.0,
-            fog_far: 160.0,
+            fog_near: 180.0,
+            fog_far: 480.0,
         }
     }
 }
@@ -113,6 +118,7 @@ fn setup(mut commands: Commands, mut mediums: ResMut<Assets<ScatteringMedium>>) 
     // background's own (near black) colour instead and the grid keeps the
     // dark floor it was drawn for.
     let ground = theme::SCENE_BG.to_linear();
+    let fog = SceneSettings::default(); // until the first map is framed
     commands.spawn(Atmosphere {
         ground_albedo: Vec3::new(ground.red, ground.green, ground.blue),
         ..Atmosphere::earth(mediums.add(ScatteringMedium::earth(256, 256)))
@@ -138,8 +144,8 @@ fn setup(mut commands: Commands, mut mediums: ResMut<Assets<ScatteringMedium>>) 
             directional_light_color: Color::NONE,
             directional_light_exponent: 8.0,
             falloff: FogFalloff::Linear {
-                start: 60.0,
-                end: 160.0,
+                start: fog.fog_near,
+                end: fog.fog_far,
             },
         },
     ));
@@ -276,8 +282,9 @@ pub fn apply_framing(
 /// matters because a LAN laid out on rings is a flat disc: seen from above it
 /// needs far less distance than a sphere would.
 /// `inset` excludes parts of the viewport hidden under panels, so the map is
-/// fitted and centred in what is visible. Fog starts just past the far side of
-/// the map so the map itself stays crisp and only the grid fades out.
+/// fitted and centred in what is visible. Fog starts well past the far side of
+/// the map (`FOG_REACH` times the distance to it), so the map itself stays
+/// crisp and the grid fades out far behind it.
 pub fn frame_camera(
     bounds: &Bounds,
     viewport: Vec2,
@@ -355,8 +362,8 @@ pub fn frame_camera(
     let position = target + direction * distance;
 
     let radius = size.length() / 2.0;
-    let fog_near = distance + radius;
-    let fog_far = fog_near + (3.0 * radius).max(40.0);
+    let fog_near = (distance + radius) * FOG_REACH;
+    let fog_far = fog_near + (3.0 * radius).max(40.0) * FOG_REACH;
     Framing {
         position,
         target,
@@ -532,7 +539,8 @@ mod tests {
             Inset::default()
         ));
 
-        // Fog starts beyond the map and the far plane is never nearer than 2000.
+        // Fog starts FOG_REACH times beyond the map and the far plane is never
+        // nearer than 2000.
         // (frame_camera never fits a box thinner than MIN_FRAME_SIZE / 2 vertically.)
         let size = bounds.size().max(Vec3::new(
             MIN_FRAME_SIZE,
@@ -540,8 +548,8 @@ mod tests {
             MIN_FRAME_SIZE,
         ));
         let radius = size.length() / 2.0;
-        assert!((f.fog_near - (distance + radius)).abs() < 1e-3);
-        assert!(f.fog_far > f.fog_near + 40.0 - 1e-3);
+        assert!((f.fog_near - (distance + radius) * FOG_REACH).abs() < 1e-3);
+        assert!(f.fog_far > f.fog_near + 40.0 * FOG_REACH - 1e-3);
         assert!(f.far >= 2000.0);
     }
 
