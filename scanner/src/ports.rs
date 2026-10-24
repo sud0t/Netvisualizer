@@ -16,6 +16,19 @@
 //! stayed silent is therefore tried once more before it is given up on; a
 //! reset is final and ends the attempts straight away.
 //!
+//! Too many connections at once hurt in two ways. A router or a firewall
+//! that sees a burst of connection attempts from one address takes it for
+//! a SYN flood and drops the ones that follow, open ports included: a
+//! common rule (`OpenWrt`'s default) passes 25 a second after a burst of 50.
+//! So the probes go round the hosts (every host's first port, then every
+//! host's second, and so on) and one host has at most [`MAX_PER_HOST`]
+//! connections open at a time, which also bounds how fast its silent ports
+//! are asked about. And every connection in flight is an open file
+//! descriptor, of which a process may have only so many (`ulimit -n`, 1024
+//! on many systems); past the limit `connect` fails with "Too many open
+//! files", which would pass for silence, so the scan never keeps more open
+//! than the limit leaves (`connections_at_once`).
+//!
 //! UDP has no handshake, so a probe is a datagram and the answer, if any,
 //! is up to the service. What a closed port does is the kernel's doing: it
 //! sends back an ICMP "port unreachable", which the kernel on our side turns
@@ -31,8 +44,8 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use tokio::net::{TcpStream, UdpSocket};
-use tokio::sync::Semaphore;
-use tokio::task::JoinSet;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::task::{JoinError, JoinSet};
 
 use crate::model::{Host, Port, Proto};
 
@@ -54,7 +67,9 @@ pub const COMMON_UDP_PORTS: [u16; 12] =
 pub struct PortScanOptions {
     /// How long a connection may take before the port counts as closed.
     pub timeout: Duration,
-    /// How many connections are attempted at once.
+    /// How many connections are attempted at once, over all the hosts: at
+    /// most [`MAX_PER_HOST`] go to one host, and never more than the
+    /// process has file descriptors left for (see the module comment).
     pub concurrency: usize,
 }
 
@@ -70,6 +85,18 @@ impl Default for PortScanOptions {
 /// How many connections a port that stays silent gets in all (see the
 /// module comment). A reset ends the attempts early.
 const TCP_ATTEMPTS: usize = 2;
+
+/// How many connections one host has open at once, at most, whatever
+/// `concurrency` allows over all the hosts (see the module comment). It
+/// also bounds the rate: a host that drops the probes to its closed ports
+/// is asked about this many ports per two timeouts. Measured on the dev
+/// LAN's gateway over 9000 ports: 254 at once found 2 of its 6 open ports,
+/// 32 found 5, 16 found all 6.
+pub const MAX_PER_HOST: usize = 16;
+
+/// File descriptors left unused by the connections, for whatever else the
+/// program opens meanwhile.
+const FD_HEADROOM: usize = 128;
 
 /// What a connection attempt learned about a TCP port.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,34 +119,69 @@ pub async fn tcp_port_scan(
     hosts: &mut [Host],
     ports: &[u16],
     options: &PortScanOptions,
-    mut progress: impl FnMut(usize, usize),
+    progress: impl FnMut(usize, usize),
 ) {
     let ports: BTreeSet<u16> = ports.iter().copied().collect();
-    let slots = Arc::new(Semaphore::new(options.concurrency.max(1)));
-    let mut probes = JoinSet::new();
-    for (index, host) in hosts.iter().enumerate() {
-        for &port in &ports {
-            let address = SocketAddr::new(host.ip, port);
-            let slots = Arc::clone(&slots);
-            let timeout = options.timeout;
-            probes.spawn(async move {
-                let _slot = slots
-                    .acquire_owned()
-                    .await
-                    .expect("the semaphore is never closed");
-                (index, port, tcp_probe(address, timeout).await)
-            });
+    let addresses: Vec<IpAddr> = hosts.iter().map(|h| h.ip).collect();
+    let slots = Arc::new(Semaphore::new(connections_at_once(options.concurrency)));
+    let host_slots: Vec<Arc<Semaphore>> = addresses
+        .iter()
+        .map(|_| Arc::new(Semaphore::new(MAX_PER_HOST)))
+        .collect();
+    let mut probes: JoinSet<Probed> = JoinSet::new();
+    let mut results = Results {
+        total: addresses.len() * ports.len(),
+        done: 0,
+        hosts,
+        progress,
+    };
+    for (index, port) in probe_order(addresses.len(), &ports) {
+        // A probe is spawned once it holds a slot of each kind, so no more
+        // than `concurrency` tasks exist at a time (every port of a /24 is
+        // 16 million pairs, far too many to spawn up front), and the probes
+        // that settle meanwhile are recorded as they do.
+        let slot = take_slot(&slots, &mut probes, &mut results).await;
+        let host_slot = take_slot(&host_slots[index], &mut probes, &mut results).await;
+        let address = SocketAddr::new(addresses[index], port);
+        let timeout = options.timeout;
+        probes.spawn(async move {
+            let _slots = (slot, host_slot); // given back when the probe is done
+            (index, port, tcp_probe(address, timeout).await)
+        });
+        while let Some(result) = probes.try_join_next() {
+            results.settle(result);
         }
     }
-    let total = probes.len();
-    let mut done = 0;
     while let Some(result) = probes.join_next().await {
-        done += 1;
-        progress(done, total);
+        results.settle(result);
+    }
+    for host in results.hosts {
+        host.open_ports.sort_by_key(|p| (p.proto, p.number));
+    }
+}
+
+/// What one probe reports: the host (by index), the port, what it learned.
+type Probed = (usize, u16, TcpState);
+
+/// Where a TCP scan stands: the hosts being filled in, and how many of its
+/// probes have settled.
+struct Results<'a, P> {
+    hosts: &'a mut [Host],
+    total: usize,
+    done: usize,
+    progress: P,
+}
+
+impl<P: FnMut(usize, usize)> Results<'_, P> {
+    /// Count a settled probe, and list its port when it was open. (`Err` is
+    /// a probe that panicked: nothing is known about its port.)
+    fn settle(&mut self, result: Result<Probed, JoinError>) {
+        self.done += 1;
+        (self.progress)(self.done, self.total);
         let Ok((index, number, TcpState::Open)) = result else {
-            continue;
+            return;
         };
-        let host = &mut hosts[index];
+        let host = &mut self.hosts[index];
         if !host
             .open_ports
             .iter()
@@ -133,9 +195,33 @@ pub async fn tcp_port_scan(
             });
         }
     }
-    for host in hosts {
-        host.open_ports.sort_by_key(|p| (p.proto, p.number));
+}
+
+/// Wait for a slot on `slots`, recording the probes that settle meanwhile:
+/// while a slow host has every slot of its own taken, the other hosts'
+/// results still come in and the progress keeps moving.
+async fn take_slot<P: FnMut(usize, usize)>(
+    slots: &Arc<Semaphore>,
+    probes: &mut JoinSet<Probed>,
+    results: &mut Results<'_, P>,
+) -> OwnedSemaphorePermit {
+    loop {
+        tokio::select! {
+            permit = Arc::clone(slots).acquire_owned() => {
+                return permit.expect("the semaphore is never closed");
+            }
+            Some(result) = probes.join_next() => results.settle(result),
+        }
     }
+}
+
+/// The order the pairs are tried in: every host's first port, then every
+/// host's second, and so on, so the connections in flight spread over the
+/// hosts instead of all going to one.
+fn probe_order(hosts: usize, ports: &BTreeSet<u16>) -> impl Iterator<Item = (usize, u16)> + '_ {
+    ports
+        .iter()
+        .flat_map(move |&port| (0..hosts).map(move |index| (index, port)))
 }
 
 /// Up to [`TCP_ATTEMPTS`] connections to `address`, stopping at the first
@@ -200,7 +286,7 @@ pub async fn udp_port_scan(
 ) {
     let ports: BTreeSet<u16> = ports.iter().copied().collect();
     let total = hosts.len() * ports.len();
-    let slots = Arc::new(Semaphore::new(options.concurrency.max(1)));
+    let slots = Arc::new(Semaphore::new(connections_at_once(options.concurrency)));
     let mut probes = JoinSet::new();
     for (index, host) in hosts.iter().enumerate() {
         let ip = host.ip;
@@ -273,6 +359,36 @@ async fn udp_probe(address: SocketAddr, timeout: Duration) -> UdpState {
         // Some other error (not the port's doing), or the time ran out.
         Ok(Err(_)) | Err(_) => UdpState::OpenOrFiltered,
     }
+}
+
+/// `wanted` connections at once, or as many as the process has file
+/// descriptors left for, less [`FD_HEADROOM`]: each connection in flight
+/// is one, and past the limit (`ulimit -n`) `connect` fails with "Too many
+/// open files", which the scan could not tell from a silent port.
+fn connections_at_once(wanted: usize) -> usize {
+    let Some(limit) = open_file_limit() else {
+        return wanted.max(1); // unknown: take the caller's word for it
+    };
+    let left = limit.saturating_sub(open_files().unwrap_or(0) + FD_HEADROOM);
+    wanted.clamp(1, left.max(1))
+}
+
+/// The limit on open file descriptors for this process (`RLIMIT_NOFILE`,
+/// what `ulimit -n` prints), if the system says.
+fn open_file_limit() -> Option<usize> {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: `getrlimit` writes the struct it is given, and nothing else.
+    let rc = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) };
+    (rc == 0).then(|| usize::try_from(limit.rlim_cur).unwrap_or(usize::MAX))
+}
+
+/// How many file descriptors the process has open right now: Linux lists
+/// them in `/proc/self/fd` (one more than it had: the listing is one).
+fn open_files() -> Option<usize> {
+    std::fs::read_dir("/proc/self/fd").ok().map(Iterator::count)
 }
 
 /// The well-known name of a port ("ssh" for 22/tcp) from the system's
@@ -526,6 +642,30 @@ mod tests {
         assert_eq!(found, expected, "the closed port is not listed");
         assert!(hosts[0].open_ports.iter().all(|p| p.proto == Proto::Udp));
         drop(quiet);
+    }
+
+    /// The pairs go round the hosts, port by port.
+    #[test]
+    fn probes_go_round_the_hosts() {
+        let ports: BTreeSet<u16> = [80, 22].into_iter().collect();
+        let order: Vec<(usize, u16)> = probe_order(3, &ports).collect();
+        assert_eq!(
+            order,
+            [(0, 22), (1, 22), (2, 22), (0, 80), (1, 80), (2, 80)]
+        );
+        assert_eq!(probe_order(0, &ports).count(), 0);
+    }
+
+    /// At least one connection at a time, and never more than the file
+    /// descriptors allow.
+    #[test]
+    fn connections_at_once_stay_within_the_file_limit() {
+        assert_eq!(connections_at_once(0), 1);
+        assert_eq!(connections_at_once(2), 2);
+        let most = connections_at_once(usize::MAX);
+        if let Some(limit) = open_file_limit() {
+            assert!(most < limit, "{most} of {limit}");
+        }
     }
 
     #[test]

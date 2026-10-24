@@ -83,7 +83,8 @@ pub struct Args {
     #[arg(long, value_name = "SECONDS", default_value_t = 1.0, value_parser = parse_seconds, help_heading = "Scanning")]
     pub timeout: f64,
 
-    /// Pings or connections in flight at once (1 to 65535).
+    /// Pings or connections in flight at once (1 to 65535; a TCP scan opens
+    /// at most 16 to one host).
     #[arg(
         long,
         value_name = "N",

@@ -258,6 +258,9 @@ async fn run(plan: &ScanPlan, tx: &Sender<ScanEvent>) -> Result<(), String> {
             }
         }
     }
+    // The packet socket has done its work; open, it would go on taking a
+    // copy of every ARP frame on the link for the rest of the scan.
+    drop(arp);
     if let Some(network) = ping {
         let options = SweepOptions {
             timeout: settings.timeout,
