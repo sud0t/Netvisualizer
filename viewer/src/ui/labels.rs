@@ -1,6 +1,7 @@
 //! The host labels: one line of text in a box over each node, following
-//! it on screen, fading with the fog, brighter when hovered and framed when
-//! selected. They live on a layer under every panel, so the rail covers
+//! it on screen, fading with the fog, grown and lit the phosphor when
+//! hovered (in place of the node resizing) and framed when selected. They
+//! live on a layer under every panel, so the rail covers
 //! them, and nearer labels draw over farther ones.
 
 use std::collections::HashMap;
@@ -27,6 +28,9 @@ const MIN_LABEL_OPACITY: f32 = 0.01;
 /// A label whose anchor is further than this (logical pixels) outside the
 /// viewport cannot reach into it, and is not placed at all.
 const LABEL_CULL_MARGIN: f32 = 240.0;
+/// A hovered or selected label grows by this much, in place of the node
+/// (graph.rs no longer resizes a hovered node).
+const LABEL_ACTIVE_SCALE: f32 = 1.25;
 
 /// The layer the labels hang from.
 #[derive(Component)]
@@ -50,12 +54,20 @@ pub struct LabelStyle {
 
 impl LabelStyle {
     pub fn new(key: ColorKey, hovered: bool, selected: bool) -> LabelStyle {
-        let text = match key {
+        let role = match key {
             ColorKey::Scanner => theme::ROLE_SCANNER,
             ColorKey::Gateway => theme::ROLE_GATEWAY,
             ColorKey::Router => theme::ROLE_ROUTER,
             ColorKey::Down => theme::ROLE_DOWN,
             ColorKey::Host => theme::TEXT,
+        };
+        // Hovered or selected, the label lights the phosphor in place of its
+        // role colour (and grows, in `place_labels`): the node no longer
+        // resizes on hover.
+        let text = if hovered || selected {
+            theme::ACCENT
+        } else {
+            role
         };
         let background = if selected {
             theme::HUD_BG_SOLID
@@ -255,6 +267,10 @@ fn place_labels(
         // Nearer labels sit higher within the layer (0 to 0.9 above it).
         transform.translation.z = 0.9 * (1.0 - distance / settings.fog_far).clamp(0.0, 1.0);
 
+        // Grow a hovered or selected label, in place of resizing its node.
+        let active = Some(label.node) == picker.hovered || Some(label.node) == selected;
+        transform.scale = Vec3::splat(if active { LABEL_ACTIVE_SCALE } else { 1.0 });
+
         let style = LabelStyle::new(
             node.key,
             Some(label.node) == picker.hovered,
@@ -315,9 +331,16 @@ mod tests {
         let hovered = LabelStyle::new(ColorKey::Host, true, false);
         assert_eq!(hovered.border, theme::HUD_BORDER_HOVER);
         assert_eq!(hovered.background, theme::HUD_BG);
+        assert_eq!(hovered.text, theme::ACCENT, "hover lights the phosphor");
+        assert_eq!(
+            LabelStyle::new(ColorKey::Scanner, true, false).text,
+            theme::ACCENT,
+            "hover lights the phosphor whatever the role",
+        );
         let selected = LabelStyle::new(ColorKey::Host, true, true);
         assert_eq!(selected.border, theme::ACCENT, "selected wins over hovered");
         assert_eq!(selected.background, theme::HUD_BG_SOLID);
+        assert_eq!(selected.text, theme::ACCENT);
     }
 
     #[test]

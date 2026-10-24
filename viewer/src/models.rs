@@ -88,6 +88,17 @@ impl ModelKind {
             ModelKind::Rack => std::f32::consts::PI,
         }
     }
+
+    /// How much of its sphere the model fills. A rack is tall and narrow, so
+    /// fitting it by its diagonal leaves it reading small; it is drawn a
+    /// little larger than the unit sphere (it still stands on the floor and
+    /// stays clear of the label above it).
+    fn fill(self) -> f32 {
+        match self {
+            ModelKind::Terminal => 1.0,
+            ModelKind::Rack => 1.3,
+        }
+    }
 }
 
 /// One drawable piece of a model: a mesh, where it sits in the model (the
@@ -317,7 +328,7 @@ fn build_model(
             bounds.expand_by_point(piece.transform.transform_point3(Vec3::from(position)));
         }
     }
-    let place = Mat4::from_rotation_y(kind.yaw()) * fit(&bounds).to_matrix();
+    let place = Mat4::from_rotation_y(kind.yaw()) * fit(&bounds, kind.fill()).to_matrix();
 
     let fallback = GltfMaterial::default();
     let mut looks: HashMap<Option<AssetId<GltfMaterial>>, Looks> = HashMap::new();
@@ -350,14 +361,15 @@ fn build_model(
     Model { parts }
 }
 
-/// The transform that scales a box until it would just fit in the unit
-/// sphere (its diagonal 2) and puts it on the vertical axis with the middle
-/// of its base at the sphere's bottom, (0, -1, 0). Its top is then at most
-/// at the sphere's top.
-pub fn fit(bounds: &Bounds) -> Transform {
+/// The transform that scales a box so its diagonal is `fill` times the unit
+/// sphere's diameter (`fill` = 1 just fits it inside) and puts it on the
+/// vertical axis with the middle of its base at the sphere's bottom,
+/// (0, -1, 0); its base stays there whatever the fill. Its top is then at
+/// most at the sphere's top for `fill` = 1, a little above for more.
+pub fn fit(bounds: &Bounds, fill: f32) -> Transform {
     let half_diagonal = bounds.size().length() / 2.0;
     let scale = if half_diagonal > 0.0 {
-        1.0 / half_diagonal
+        fill / half_diagonal
     } else {
         1.0
     };
@@ -431,7 +443,7 @@ mod tests {
             min: Vec3::new(-1.0, 32.0, -2.0),
             max: Vec3::new(3.0, 140.0, 10.0),
         };
-        let fit = fit(&bounds);
+        let fit = fit(&bounds, 1.0);
         let base = Vec3::new(1.0, 32.0, 4.0);
         let placed = fit.transform_point(base);
         assert!((placed - Vec3::NEG_Y).length() < 1e-5, "{placed:?}");
@@ -451,7 +463,7 @@ mod tests {
             min: Vec3::new(2.0, 1.0, 0.0),
             max: Vec3::new(2.0, 1.0, 0.0),
         };
-        let fit = fit(&point);
+        let fit = fit(&point, 1.0);
         assert_eq!(fit.scale, Vec3::ONE);
         assert_eq!(fit.transform_point(point.min), Vec3::NEG_Y);
     }

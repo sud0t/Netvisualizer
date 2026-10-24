@@ -279,8 +279,9 @@ fn clicks(
     }
 }
 
-/// Hover and selection look: a brighter model, a little bigger. Each part
-/// swaps to its material for the state, made up front (models.rs).
+/// Hover and selection look: a brighter model, and for a selection a little
+/// bigger (hover grows the label instead, ui/labels.rs). Each part swaps to
+/// its material for the state, made up front (models.rs).
 fn apply_states(
     picker: Res<Picker>,
     graph: Res<Graph>,

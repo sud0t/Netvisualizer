@@ -27,7 +27,8 @@ pub const FLOOR_Y: f32 = 0.0;
 pub const LABEL_GAP: f32 = 0.45;
 /// Hosts without a position go on a ring this far outside the positioned ones.
 const FALLBACK_RING_GAP: f32 = 6.0;
-/// Hovered / selected nodes grow by this much.
+/// Selected nodes grow by this much. Hover no longer resizes the node; it
+/// grows and lights the label instead (ui/labels.rs).
 pub const HIGHLIGHT_SCALE: f32 = 1.12;
 
 /// A node's radius per role: the scanner is the biggest, then the gateway
@@ -274,19 +275,20 @@ fn rebuild(
     *graph = next;
 }
 
-/// Hover and selection: the node a little bigger, growing up from the floor
-/// rather than into it. Returns whether the state changed, in which case the
-/// caller gives the node's parts their materials for it
+/// Selection makes the node a little bigger, growing up from the floor
+/// rather than into it; hover leaves its size alone (the label reacts
+/// instead, ui/labels.rs). Returns whether the state changed, in which case
+/// the caller gives the node's parts their materials for it
 /// ([`crate::models::PartLooks`]).
 pub fn set_state(node: &mut Node, transform: &mut Transform, state: NodeState) -> bool {
     if node.state == state {
         return false;
     }
     node.state = state;
-    let scale = if state == NodeState::None {
-        1.0
-    } else {
+    let scale = if state == NodeState::Selected {
         HIGHLIGHT_SCALE
+    } else {
+        1.0
     };
     transform.scale = Vec3::splat(node.radius * scale);
     transform.translation = node_centre(transform.translation, node.radius, scale);
@@ -403,7 +405,7 @@ mod tests {
             node_centre(raised, 0.8, 1.0),
             Vec3::new(4.0, FLOOR_Y + 0.8, -2.0)
         );
-        // Grown by a hover, its sphere still rests on the floor.
+        // Grown by a selection, its sphere still rests on the floor.
         let grown = node_centre(raised, 0.8, HIGHLIGHT_SCALE);
         assert!((grown.y - (FLOOR_Y + 0.8 * HIGHLIGHT_SCALE)).abs() < 1e-6);
     }
