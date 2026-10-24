@@ -496,7 +496,7 @@ fn draw_list(
 }
 
 /// One host-list row: role dot, name (ellipsised), ip on the right unless the
-/// name already says it ("Raspberry Pi Foundation (192.168.1.251)").
+/// name already says it (a host with neither a name nor a vendor).
 fn draw_row(ui: &mut egui::Ui, rect: egui::Rect, row: &Row, selected: bool) -> egui::Response {
     let response = ui
         .interact(rect, ui.id().with(("host", &row.id)), egui::Sense::click())

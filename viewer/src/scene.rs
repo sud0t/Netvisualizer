@@ -3,6 +3,9 @@
 //! and this module only reads its bounds.
 
 use bevy::color::Alpha;
+use bevy::light::atmosphere::ScatteringMedium;
+use bevy::light::{Atmosphere, SunDisk};
+use bevy::pbr::AtmosphereSettings;
 use bevy::prelude::*;
 use bevy::render::view::{DebandDither, Tonemapping};
 use bevy::window::{PrimaryWindow, WindowResized};
@@ -96,10 +99,28 @@ impl Plugin for ScenePlugin {
     }
 }
 
-fn setup(mut commands: Commands) {
+fn setup(mut commands: Commands, mut mediums: ResMut<Assets<ScatteringMedium>>) {
+    // The sky: Bevy's own atmospheric scattering, the sunlight scattered by
+    // a planet's air worked out on the GPU (what the bevy_atmosphere crate
+    // did for older Bevys). One entity is the planet, Earth's radii and air;
+    // its hook puts it 6360 km straight down, so the map lies on the ground
+    // under the sky. The camera asks for the sky with `AtmosphereSettings`
+    // (which brings `Hdr`), and the sun below gives it its light and colour.
+    // It needs compute shaders: on a GPU without them the plugin stays off
+    // and the clear colour shows instead. Below the horizon the model draws
+    // the planet's surface, lit by the sun through the air; Earth's albedo
+    // of 0.3 makes that a beige floor, so the ground is given the scene
+    // background's own (near black) colour instead and the grid keeps the
+    // dark floor it was drawn for.
+    let ground = theme::SCENE_BG.to_linear();
+    commands.spawn(Atmosphere {
+        ground_albedo: Vec3::new(ground.red, ground.green, ground.blue),
+        ..Atmosphere::earth(mediums.add(ScatteringMedium::earth(256, 256)))
+    });
     commands.spawn((
         MainCamera,
         Camera3d::default(),
+        AtmosphereSettings::default(),
         Projection::Perspective(PerspectiveProjection {
             fov: FOV_DEGREES.to_radians(),
             near: 0.1,
@@ -124,13 +145,14 @@ fn setup(mut commands: Commands) {
     ));
 
     // The sun, from above and to one side; 6000 lux was tuned by eye on the
-    // demo map.
+    // demo map. It lights the sky too, and shows in it as a disc.
     commands.spawn((
         DirectionalLight {
             color: Color::WHITE,
             illuminance: 6_000.0,
             ..default()
         },
+        SunDisk::EARTH,
         Transform::from_xyz(14.0, 30.0, 18.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 }

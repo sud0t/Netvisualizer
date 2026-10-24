@@ -185,16 +185,15 @@ impl Host {
         }
     }
 
-    /// What the map calls this host: its hostname; else its vendor with the
-    /// address, "Raspberry Pi Foundation (192.168.1.251)", so two of a kind
-    /// stay apart; else the address alone.
+    /// What the map calls this host: its hostname; else its vendor,
+    /// "Raspberry Pi Foundation"; else its address. Two hosts of one vendor
+    /// share a label, and the host list and the details card show the
+    /// address beside it to tell them apart.
     pub fn label(&self) -> String {
         let given = |value: &Option<String>| value.clone().filter(|v| !v.is_empty());
-        match (given(&self.hostname), given(&self.vendor)) {
-            (Some(name), _) => name,
-            (None, Some(vendor)) => format!("{vendor} ({})", self.ip),
-            (None, None) => self.ip.to_string(),
-        }
+        given(&self.hostname)
+            .or_else(|| given(&self.vendor))
+            .unwrap_or_else(|| self.ip.to_string())
     }
 }
 
@@ -325,7 +324,7 @@ mod tests {
             );
         }
         assert_eq!(hosts[0].label(), "kylr-laptop");
-        assert_eq!(hosts[2].label(), "Raspberry Pi Foundation (192.168.1.251)");
+        assert_eq!(hosts[2].label(), "Raspberry Pi Foundation");
         assert_eq!(hosts[1].extra["status"], "down");
         assert_eq!(
             hosts[1].open_ports[1].state.as_deref(),
@@ -337,14 +336,14 @@ mod tests {
     }
 
     #[test]
-    fn label_is_the_name_else_the_vendor_with_the_address_else_the_address() {
+    fn label_is_the_name_else_the_vendor_else_the_address() {
         let mut host = Host::new(Ipv4Addr::new(10, 0, 0, 8));
         assert_eq!(host.label(), "10.0.0.8");
         host.hostname = Some(String::new());
         host.vendor = Some(String::new());
         assert_eq!(host.label(), "10.0.0.8", "empty strings count as missing");
         host.vendor = Some("Raspberry Pi Foundation".into());
-        assert_eq!(host.label(), "Raspberry Pi Foundation (10.0.0.8)");
+        assert_eq!(host.label(), "Raspberry Pi Foundation");
         host.hostname = Some("printer.lan".into());
         assert_eq!(host.label(), "printer.lan", "the name comes first");
     }

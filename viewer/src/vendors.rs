@@ -92,7 +92,7 @@ mod tests {
         ];
         assert_eq!(look_up(&mut hosts), Ok(1));
         assert_eq!(hosts[0].vendor.as_deref(), Some("Raspberry Pi Foundation"));
-        assert_eq!(hosts[0].label(), "Raspberry Pi Foundation (192.168.1.251)");
+        assert_eq!(hosts[0].label(), "Raspberry Pi Foundation");
         assert!(hosts[0].extra.is_empty());
 
         assert_eq!(hosts[1].vendor, None);

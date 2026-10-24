@@ -180,7 +180,7 @@
     },
     {
       "id": "192.168.1.32",
-      "label": "TP-Link (192.168.1.32)",
+      "label": "TP-Link",
       "role": "host",
       "ip": "192.168.1.32",
       "hostname": null,
@@ -215,7 +215,7 @@
     },
     {
       "id": "192.168.1.36",
-      "label": "Sony (192.168.1.36)",
+      "label": "Sony",
       "role": "host",
       "ip": "192.168.1.36",
       "hostname": null,
@@ -302,7 +302,7 @@
     },
     {
       "id": "192.168.1.100",
-      "label": "TP-Link (192.168.1.100)",
+      "label": "TP-Link",
       "role": "host",
       "ip": "192.168.1.100",
       "hostname": null,
@@ -357,7 +357,7 @@
     },
     {
       "id": "192.168.1.113",
-      "label": "HP (192.168.1.113)",
+      "label": "HP",
       "role": "host",
       "ip": "192.168.1.113",
       "hostname": null,
@@ -633,7 +633,7 @@
     },
     {
       "id": "192.168.1.198",
-      "label": "Intel (192.168.1.198)",
+      "label": "Intel",
       "role": "host",
       "ip": "192.168.1.198",
       "hostname": null,
