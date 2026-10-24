@@ -8,7 +8,7 @@
 //!   route of each interface, which names its gateway.
 //!
 //! When nobody names an interface, "our" network is the one holding the
-//! address our internet traffic leaves from (see [`outbound_ip`]).
+//! address our internet traffic leaves from (see `outbound_ip`).
 
 use std::collections::HashMap;
 use std::fmt;
@@ -136,7 +136,7 @@ pub fn default_network(interface: Option<&str>) -> Result<LocalNetwork, LocalNet
 /// belongs to no network, so only the default route can match it (a route
 /// to a private network, a VPN's 10.0.0.0/8 say, would catch a private
 /// address instead and name the wrong interface).
-pub fn outbound_ip() -> Option<Ipv4Addr> {
+fn outbound_ip() -> Option<Ipv4Addr> {
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
     socket.connect((Ipv4Addr::new(192, 0, 2, 1), 1)).ok()?;
     match socket.local_addr().ok()?.ip() {
@@ -162,20 +162,20 @@ pub fn mark_local(hosts: &mut [Host], network: &Ipv4Net) {
 
 /// One row of the kernel's IPv4 routing table.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Route {
-    pub interface: String,
+struct Route {
+    interface: String,
     /// The addresses this row is for; 0.0.0.0/0 is the default route.
-    pub destination: Ipv4Net,
+    destination: Ipv4Net,
     /// The router to hand the packets to, or `None` when the destination is
     /// directly connected (the packets go straight out of the interface).
-    pub gateway: Option<Ipv4Addr>,
+    gateway: Option<Ipv4Addr>,
     /// Lower wins when two rows match the same address.
-    pub metric: u32,
+    metric: u32,
 }
 
 /// The routing table, or an empty one where it cannot be read (it is only
 /// read from `/proc/net/route`, so outside Linux there are no gateways).
-pub fn routes() -> Vec<Route> {
+fn routes() -> Vec<Route> {
     std::fs::read_to_string("/proc/net/route")
         .map(|text| parse_routes(&text))
         .unwrap_or_default()
@@ -197,7 +197,7 @@ const RTF_GATEWAY: u32 = 0x0002; // the destination is reached through a gateway
 /// in the machine's own byte order, so on a little-endian PC `FE01A8C0` is
 /// the bytes C0 A8 01 FE, 192.168.1.254. Rows that are not up, or do not
 /// parse, are skipped.
-pub fn parse_routes(text: &str) -> Vec<Route> {
+fn parse_routes(text: &str) -> Vec<Route> {
     text.lines().skip(1).filter_map(parse_route_line).collect()
 }
 
@@ -231,7 +231,7 @@ fn hex_address(field: &str) -> Option<Ipv4Addr> {
 
 /// Each interface's gateway: the default route (0.0.0.0/0) with the lowest
 /// metric on that interface.
-pub fn default_gateways(routes: &[Route]) -> HashMap<String, Ipv4Addr> {
+fn default_gateways(routes: &[Route]) -> HashMap<String, Ipv4Addr> {
     let mut best: HashMap<String, (u32, Ipv4Addr)> = HashMap::new();
     for route in routes {
         let Some(gateway) = route.gateway else {
@@ -314,7 +314,7 @@ eth9\t00000000\t0100000A\t0002\t0\t0\t0\t00000000\t0\t0\t0
     #[test]
     fn garbage_rows_are_skipped() {
         let routes = parse_routes("header\nwlan0 zz 00000000 0001 0 0 0 00FFFFFF\nshort row\n");
-        assert!(routes.is_empty());
+        assert!(routes.is_empty(), "{routes:?}");
     }
 
     #[test]

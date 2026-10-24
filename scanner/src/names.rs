@@ -60,7 +60,7 @@ pub async fn resolve_hostnames(
 }
 
 /// The name the system's resolver has for `ip`, if it has one. Blocks.
-pub fn reverse_lookup(ip: IpAddr) -> Option<String> {
+fn reverse_lookup(ip: IpAddr) -> Option<String> {
     // `lookup_addr` asks getnameinfo with NI_NAMEREQD: an error, rather than
     // the address back as text, when there is no name.
     dns_lookup::lookup_addr(&ip)

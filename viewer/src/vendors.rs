@@ -41,13 +41,13 @@ pub fn look_up(hosts: &mut [Host]) -> Result<usize, String> {
             macs.len()
         ));
     }
-    let mut named = 0;
+    let mut with_vendor = 0;
     for ((index, _), name) in with_mac.into_iter().zip(names) {
         let host = &mut hosts[index];
         match name {
             Some(vendor) if !vendor.is_empty() => {
                 host.vendor = Some(vendor);
-                named += 1;
+                with_vendor += 1;
             }
             _ if host.mac.is_some_and(|mac| mac.is_locally_administered()) => {
                 host.extra.insert("mac_note".into(), RANDOMISED_NOTE.into());
@@ -55,7 +55,7 @@ pub fn look_up(hosts: &mut [Host]) -> Result<usize, String> {
             _ => {}
         }
     }
-    Ok(named)
+    Ok(with_vendor)
 }
 
 /// `netvisualizer.vendors.vendor_names(macs)`: one vendor name, or `None`,

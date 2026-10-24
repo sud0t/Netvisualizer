@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pandas as pd
 
-CSV = Path(__file__).resolve().parent.parent / "assets" / "mac-vendors-export.csv"
+CSV = Path(__file__).resolve().parents[2] / "assets" / "mac-vendors-export.csv"
 
 # How many characters of a written address each block size covers, longest
 # first, so a finer block wins over the coarser one it was carved out of.

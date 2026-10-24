@@ -1,17 +1,17 @@
 [package]
 name = "netvisualizer"
-description = "Netvisualizer: the network map in a native window (Bevy); reads the JSON map the Python side serves or saves"
+description = "Netvisualizer: finds the hosts on a network and shows them as a 3D map in its own window (Bevy)"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
-[[bin]]
-name = "netvisualizer"
-path = "src/main.rs"
+[lints]
+workspace = true
 
 [dependencies]
-# Versions checked on crates.io 2026-10-20 (see project_spec.md, Milestone 4).
+# Versions checked on crates.io 2026-10-20.
 # bevy_egui must be the release built for this exact Bevy minor; bump them together.
 bevy = { version = "0.20.0", features = ["wayland", "png"] }
 # The egui release built for Bevy 0.20 (compatibility table in bevy_egui's README).
@@ -20,23 +20,21 @@ bevy = { version = "0.20.0", features = ["wayland", "png"] }
 # default `open_url` (a browser launcher) and `picking` (bevy_picking bridge)
 # are left out: nothing here needs them.
 bevy_egui = { version = "0.43.1", default-features = false, features = ["render", "default_fonts", "manage_clipboard"] }
-serde = { version = "1.0", features = ["derive"] }
-# preserve_order keeps host fields in the order Python wrote them, so the
-# generic details card lists them in that order too.
-serde_json = { version = "1.0", features = ["preserve_order"] }
+serde.workspace = true
+serde_json.workspace = true
 clap = { version = "4.6", features = ["derive"] }
 # Same wgpu Bevy renders with; used directly only to probe for a GPU adapter
-# before Bevy starts (see render_settings in main.rs).
+# before Bevy starts (see startup.rs).
 wgpu = { version = "30", default-features = false }
 # The networking side (../scanner): finds the hosts. scan.rs decides which
 # of its steps run, in what order, and turns their results into maps.
 scanner = { version = "0.1.0", path = "../scanner", package = "netvisualizer-scanner" }
 # The scanner is async; scan.rs gives each scan a runtime on its own thread.
-tokio = { version = "1.54.1", features = ["rt"] }
+tokio = { workspace = true, features = ["rt"] }
 # Embeds Python (python.rs) for the parts that stay in Python. Links the
-# system's libpython: a Python upgrade means a rebuild. `auto-initialize`
-# starts the interpreter on first use.
-pyo3 = { version = "0.30.1", features = ["auto-initialize"] }
+# libpython named in .cargo/config.toml: a Python upgrade means a rebuild.
+# `auto-initialize` starts the interpreter on first use.
+pyo3 = { workspace = true, features = ["auto-initialize"] }
 
 [features]
 # `cargo run --features dev` links Bevy as a shared library: rebuilds after a
@@ -45,5 +43,4 @@ dev = ["bevy/dynamic_linking"]
 
 [build-dependencies]
 # build.rs: the rpath to the libpython PyO3 links (see .cargo/config.toml).
-pyo3-build-config = "0.30.1"
-
+pyo3-build-config.workspace = true

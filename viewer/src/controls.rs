@@ -145,11 +145,12 @@ pub fn ease_in_out_cubic(t: f32) -> f32 {
     }
 }
 
-impl FlyControls {
-    pub fn fast(&self, keys: &ButtonInput<KeyCode>) -> bool {
-        keys.any_pressed(FAST_KEYS)
-    }
+/// Shift is held: fly faster.
+pub fn fast_held(keys: &ButtonInput<KeyCode>) -> bool {
+    keys.any_pressed(FAST_KEYS)
+}
 
+impl FlyControls {
     pub fn set_speed(&mut self, value: f32) {
         self.speed = value.clamp(self.min_speed, self.max_speed);
     }
@@ -223,7 +224,7 @@ pub fn command_modifier_held(keys: &ButtonInput<KeyCode>) -> bool {
 /// (right, up, back), each -1, 0 or 1, from the held movement keys.
 pub fn movement_input(keys: &ButtonInput<KeyCode>) -> Vec3 {
     let axis = |positive: KeyCode, negative: KeyCode| {
-        keys.pressed(positive) as i8 as f32 - keys.pressed(negative) as i8 as f32
+        f32::from(i8::from(keys.pressed(positive)) - i8::from(keys.pressed(negative)))
     };
     Vec3::new(
         axis(KeyCode::KeyD, KeyCode::KeyA),
@@ -357,7 +358,7 @@ fn move_camera(
         movement_input(&keys)
     };
     let speed = controls.speed
-        * if controls.fast(&keys) {
+        * if fast_held(&keys) {
             controls.fast_multiplier
         } else {
             1.0
@@ -383,7 +384,7 @@ mod tests {
     const FRAME: Duration = Duration::from_millis(16);
 
     /// A headless app: fixed 16 ms frames, input resources driven by hand
-    /// (no InputPlugin, so `just_pressed` is ours to clear), one camera.
+    /// (no `InputPlugin`, so `just_pressed` is ours to clear), one camera.
     /// With `window`, a primary window entity too, for the mouse-look system.
     fn test_app() -> App {
         let mut app = App::new();

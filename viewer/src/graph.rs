@@ -334,15 +334,12 @@ pub fn resolve_positions(hosts: &[Host]) -> Vec<Vec3> {
     let mut missing = 0usize;
     let mut max_radius: f32 = 0.0;
     for host in hosts {
-        match host.position {
-            Some([x, y, z]) => {
-                out.push(Some(Vec3::new(x, y, z)));
-                max_radius = max_radius.max(x.hypot(z));
-            }
-            None => {
-                out.push(None);
-                missing += 1;
-            }
+        if let Some([x, y, z]) = host.position {
+            out.push(Some(Vec3::new(x, y, z)));
+            max_radius = max_radius.max(x.hypot(z));
+        } else {
+            out.push(None);
+            missing += 1;
         }
     }
     if missing > 0 {

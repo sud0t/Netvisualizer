@@ -23,15 +23,14 @@ needs `libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev`.
 The program is `target/release/netvisualizer` (or `cargo run --release --`
 followed by its arguments).
 
-The program embeds Python 3.15 for a few features (the `netvisualizer/`
-package: the vendor lookup with pandas, later the SSH console):
-`.cargo/config.toml` names the interpreter (`python3.15`, installed with
-`uv python install 3.15`), and the build links its libpython, so after a Python
-upgrade, rebuild. The packages it uses live in `.venv`, made from the same Python:
+The program embeds Python 3.15 for a few features (the package in `python/`:
+the vendor lookup with pandas, later the SSH console): `.cargo/config.toml`
+names the interpreter (`python3.15`, installed with `uv python install 3.15`),
+and the build links its libpython, so after a Python upgrade, rebuild. The
+packages it uses live in `.venv`, made from the same Python by uv:
 
 ```sh
-uv venv --python 3.15 --seed .venv
-.venv/bin/pip install pandas asyncssh
+uv sync                    # reads pyproject.toml: pandas, asyncssh
 ```
 
 `netvisualizer -v` says which Python it embeds and which packages it can import.
@@ -61,6 +60,10 @@ opens straight away and the map redraws as each stage of the scan finishes;
 closing the window ends the program. To try it without scanning, show the
 saved fake LAN: `netvisualizer --json viewer/tests/fixtures/demo.json`.
 
+A host or port that stays silent is asked once more before it is given up
+on: Wi-Fi loses the odd frame, and one lost packet would otherwise hide a
+host or make an open port look closed.
+
 ### Privileges
 
 With root, or the `CAP_NET_RAW` capability on the binary, the sweep sends
@@ -72,6 +75,9 @@ To grant the capability once per build:
 ```sh
 sudo setcap cap_net_raw+ep target/release/netvisualizer
 ```
+
+(Prefer that to `sudo cargo run`: a build run as root leaves root-owned
+files in `target/` that your own builds cannot overwrite.)
 
 Without it the ping sweep runs, which needs no root: Linux lets a process
 open an ICMP "datagram" socket when its group is inside
@@ -97,12 +103,14 @@ cross routers.
 ```sh
 cargo test --workspace --features netvisualizer/dev   # everything
 cargo test -p netvisualizer-scanner                   # the scanner alone: builds in seconds, no Bevy
+cargo clippy --all --workspace --all-targets --features netvisualizer/dev -- -D warnings
+.venv/bin/python -m unittest discover -s python/tests -t python
 
-cd viewer
-cargo run --features dev -- --json tests/fixtures/demo.json   # a saved map
-cargo run --features dev -- --scan --ports                    # a real scan
+cargo run --features dev -- --json viewer/tests/fixtures/demo.json   # a saved map
+cargo run --features dev -- --scan --ports                           # a real scan
 ```
 
+The same checks run in CI (`.github/workflows/ci.yml`) on every push.
 `--features dev` links Bevy dynamically so rebuilds take seconds; use the
 release build for normal runs. `--exit-after-frames 120 --screenshot out.png`
 renders two seconds and quits, which is the smoke test; add
@@ -111,15 +119,18 @@ help card, in that screenshot. `-v` shows Bevy's own messages too.
 If the window never appears with "Unable to find a GPU", a `WGPU_BACKEND`
 variable in your environment names a backend your GPU cannot use; the program
 prints a line and falls back to another one on its own.
+Without root, the ARP sweep can be tried in a user namespace of its own:
+`unshare -Urnm scripts/arp-sandbox.sh`.
 
 ## Layout
 
 ```
-Cargo.toml        the Cargo workspace: scanner + viewer
-scanner/          netvisualizer-scanner: finds hosts and fills in their values (sweep, names, ports)
+Cargo.toml        the Cargo workspace: scanner + viewer (shared versions and lints)
+scanner/          netvisualizer-scanner: finds hosts and fills in their values (sweeps, traceroute, names, ports)
   src/model.rs    Host and Port: the one shape shared by both sides
 viewer/           netvisualizer, the program: the window, and scan.rs, which runs the scanner
-netvisualizer/    the project spec, and the Python the program embeds (the vendor lookup)
-tests/            Python tests
+python/           netvisualizer/, the Python the program embeds (the vendor lookup), and its tests/
+pyproject.toml    its dependencies; `uv sync` makes .venv from it
+docs/             the project spec
 assets/           data files: the MAC vendor list (maclookup.app's CSV export)
 ```

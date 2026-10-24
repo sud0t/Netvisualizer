@@ -1,0 +1,72 @@
+[
+  {
+    "ip": "192.168.1.143",
+    "hostname": "kylr-laptop",
+    "mac": "78:2b:46:07:06:cf",
+    "vendor": "Intel Corporate",
+    "open_ports": [],
+    "is_local": true,
+    "extra": {}
+  },
+  {
+    "ip": "192.168.1.254",
+    "hostname": null,
+    "mac": "08:c7:f5:ed:02:cb",
+    "vendor": "Vantiva Connected Home - Technologies Telco",
+    "open_ports": [
+      {"number": 80, "proto": "tcp", "service": "http", "state": "open"},
+      {"number": 53, "proto": "udp", "service": "domain", "state": "open|filtered"}
+    ],
+    "is_local": true,
+    "extra": {"status": "down", "note": "did not answer ping"}
+  },
+  {
+    "ip": "192.168.1.251",
+    "hostname": null,
+    "mac": "b8:27:eb:8e:cc:eb",
+    "vendor": "Raspberry Pi Foundation",
+    "open_ports": [
+      {"number": 22, "proto": "tcp", "service": "ssh", "state": "open"}
+    ],
+    "is_local": true,
+    "extra": {}
+  },
+  {
+    "ip": "192.168.1.238",
+    "hostname": null,
+    "mac": "aa:b7:5d:f6:d4:16",
+    "vendor": null,
+    "open_ports": [],
+    "is_local": true,
+    "extra": {"mac_note": "locally administered (randomised) address, so no vendor"}
+  },
+  {
+    "ip": "1.1.1.1",
+    "hostname": "one.one.one.one",
+    "mac": null,
+    "vendor": null,
+    "open_ports": [
+      {"number": 53, "proto": "tcp", "service": null}
+    ],
+    "is_local": false,
+    "extra": {"path": ["192.168.1.254", "*", "162.158.144.11"], "latency_ms": 12.3}
+  },
+  {
+    "ip": "162.158.144.11",
+    "hostname": null,
+    "mac": null,
+    "vendor": null,
+    "open_ports": [],
+    "is_local": false,
+    "extra": {}
+  },
+  {
+    "ip": "fe80::1",
+    "hostname": null,
+    "mac": null,
+    "vendor": null,
+    "open_ports": [],
+    "is_local": null,
+    "extra": {}
+  }
+]

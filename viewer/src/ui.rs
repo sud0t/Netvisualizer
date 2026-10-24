@@ -445,7 +445,7 @@ impl LabelStyle {
 }
 
 /// A label's opacity: fully visible up to the fog start, gone at the fog end.
-pub fn label_opacity(distance: f32, settings: &SceneSettings) -> f32 {
+pub fn label_opacity(distance: f32, settings: SceneSettings) -> f32 {
     1.0 - smoothstep(settings.fog_near, settings.fog_far, distance)
 }
 
@@ -491,7 +491,7 @@ fn draw_labels(
         .iter()
         .filter_map(|(entity, node, transform)| {
             let distance = camera_transform.translation.distance(transform.translation);
-            let opacity = label_opacity(distance, &settings);
+            let opacity = label_opacity(distance, *settings);
             if opacity < MIN_LABEL_OPACITY {
                 return None; // lost in the fog
             }
@@ -553,7 +553,7 @@ fn paint_label(
 }
 
 /// A pointing-hand cursor while a host is under the pointer. egui owns the
-/// window's cursor icon (bevy_egui applies it), so ask egui for it.
+/// window's cursor icon (`bevy_egui` applies it), so ask egui for it.
 fn pointer_cursor(
     mut contexts: EguiContexts,
     picker: Res<Picker>,
@@ -591,10 +591,10 @@ mod tests {
             fog_near: 60.0,
             fog_far: 160.0,
         };
-        assert_eq!(label_opacity(10.0, &settings), 1.0);
-        assert_eq!(label_opacity(60.0, &settings), 1.0);
-        assert!((label_opacity(110.0, &settings) - 0.5).abs() < 1e-6);
-        assert_eq!(label_opacity(200.0, &settings), 0.0);
+        assert_eq!(label_opacity(10.0, settings), 1.0);
+        assert_eq!(label_opacity(60.0, settings), 1.0);
+        assert!((label_opacity(110.0, settings) - 0.5).abs() < 1e-6);
+        assert_eq!(label_opacity(200.0, settings), 0.0);
     }
 
     #[test]

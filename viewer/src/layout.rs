@@ -283,7 +283,7 @@ mod tests {
         for p in star_ring(&hosts(&ids, None, None), &[]) {
             assert!((radius(p) - MIN_RADIUS).abs() < 0.01, "{p:?}");
         }
-        assert!(star_ring(&[], &[]).is_empty());
+        assert_eq!(star_ring(&[], &[]), Vec::<[f32; 3]>::new());
     }
 
     #[test]

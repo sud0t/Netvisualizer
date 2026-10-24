@@ -57,8 +57,13 @@ impl MacAddr {
 
 impl fmt::Display for MacAddr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let [a, b, c, d, e, g] = self.0;
-        write!(f, "{a:02x}:{b:02x}:{c:02x}:{d:02x}:{e:02x}:{g:02x}")
+        for (i, octet) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str(":")?;
+            }
+            write!(f, "{octet:02x}")?;
+        }
+        Ok(())
     }
 }
 
@@ -201,10 +206,10 @@ mod tests {
 
     use super::*;
 
-    /// The viewer's saved demo map: a host entry there is a `Host` plus the
-    /// four keys the map adds on top (id, label, role, position).
-    const DEMO: &str = include_str!("../../viewer/tests/fixtures/demo.json");
-    const MAP_KEYS: [&str; 4] = ["id", "label", "role", "position"];
+    /// Hosts as the scan stages leave them, one of each kind: every field
+    /// filled in, a silent gateway, a randomised MAC, a traced far host, a
+    /// router, an IPv6 address.
+    const HOSTS: &str = include_str!("../tests/fixtures/hosts.json");
 
     #[test]
     fn serialises_field_for_field_like_the_python_model() {
@@ -302,20 +307,33 @@ mod tests {
         );
     }
 
+    /// The contract's JSON, read back and written again unchanged.
     #[test]
-    fn every_host_of_the_demo_map_round_trips() {
-        let doc: Value = serde_json::from_str(DEMO).unwrap();
-        let entries = doc["hosts"].as_array().unwrap();
-        assert_eq!(entries.len(), 27);
-        for entry in entries {
-            let mut fields = entry.as_object().unwrap().clone();
-            for key in MAP_KEYS {
-                fields.shift_remove(key);
-            }
-            let host: Host = serde_json::from_value(Value::Object(fields.clone())).unwrap();
-            assert_eq!(serde_json::to_value(&host).unwrap(), Value::Object(fields));
-            assert_eq!(host.label(), entry["label"], "{}", entry["id"]);
+    fn every_host_of_the_fixture_round_trips() {
+        let entries: Vec<Value> = serde_json::from_str(HOSTS).unwrap();
+        assert_eq!(entries.len(), 7);
+        let hosts: Vec<Host> = entries
+            .iter()
+            .map(|entry| serde_json::from_value(entry.clone()).unwrap())
+            .collect();
+        for (host, entry) in hosts.iter().zip(&entries) {
+            assert_eq!(
+                &serde_json::to_value(host).unwrap(),
+                entry,
+                "{}",
+                entry["ip"]
+            );
         }
+        assert_eq!(hosts[0].label(), "kylr-laptop");
+        assert_eq!(hosts[2].label(), "Raspberry Pi Foundation (192.168.1.251)");
+        assert_eq!(hosts[1].extra["status"], "down");
+        assert_eq!(
+            hosts[1].open_ports[1].state.as_deref(),
+            Some("open|filtered")
+        );
+        assert_eq!(hosts[4].open_ports[0].state, None, "an older map's port");
+        assert_eq!(hosts[4].extra["path"][1], "*");
+        assert!(hosts[6].ip.is_ipv6());
     }
 
     #[test]

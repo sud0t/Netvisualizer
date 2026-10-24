@@ -1,0 +1,52 @@
+# Formatting, clippy (warnings are errors here), both crates' tests, the
+# Python tests. The viewer links Bevy, so the Rust steps need the same
+# system libraries as a local build, and the embedded Python comes from uv
+# (the Python the .cargo/config.toml names, through PYO3_PYTHON below).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # The Python PyO3 links and runs: the one `uv sync` makes .venv from.
+  PYO3_PYTHON: ${{ github.workspace }}/.venv/bin/python
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System libraries Bevy needs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+
+      - name: Let unprivileged processes open ICMP sockets
+        # The sweep and traceroute tests use ICMP datagram sockets, which
+        # Linux allows for the groups in this range; the runner's default
+        # range is empty.
+        run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
+
+      - uses: astral-sh/setup-uv@v6
+      - name: Python 3.15 and .venv (pandas, asyncssh)
+        run: uv sync
+
+      - name: Rust toolchain from rust-toolchain.toml
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --all --workspace --all-targets --features netvisualizer/dev -- -D warnings
+      - name: Scanner tests
+        run: cargo test -p netvisualizer-scanner
+      - name: Viewer tests
+        run: cargo test -p netvisualizer --features dev
+      - name: Python tests
+        run: .venv/bin/python -m unittest discover -s python/tests -t python

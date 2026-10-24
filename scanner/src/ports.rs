@@ -8,6 +8,14 @@
 //! Only the first counts as open. (A SYN scan, which never finishes the
 //! handshake, would need a raw socket.)
 //!
+//! Silence is also what one lost packet looks like: the SYN, the SYN-ACK,
+//! or the ARP request the kernel has to send first when it has not talked
+//! to the host yet (the kernel tries ARP again only after a second, and
+//! retransmits a SYN after a second too, so with a one-second timeout a
+//! single lost frame makes every port of a host look closed). A port that
+//! stayed silent is therefore tried once more before it is given up on; a
+//! reset is final and ends the attempts straight away.
+//!
 //! UDP has no handshake, so a probe is a datagram and the answer, if any,
 //! is up to the service. What a closed port does is the kernel's doing: it
 //! sends back an ICMP "port unreachable", which the kernel on our side turns
@@ -17,6 +25,7 @@
 //! cannot tell those apart, so such a port is "open|filtered".
 
 use std::collections::{BTreeSet, HashMap};
+use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -35,7 +44,7 @@ pub const COMMON_TCP_PORTS: [u16; 44] = [
 ];
 
 /// UDP ports worth trying when nobody gives a list: the services a LAN
-/// runs over UDP (DNS, DHCP, TFTP, RPC, NTP, NetBIOS, SNMP, IPsec, syslog,
+/// runs over UDP (DNS, DHCP, TFTP, RPC, NTP, `NetBIOS`, SNMP, `IPsec`, syslog,
 /// SSDP, SIP, mDNS).
 pub const COMMON_UDP_PORTS: [u16; 12] =
     [53, 67, 69, 111, 123, 137, 161, 500, 514, 1900, 5060, 5353];
@@ -58,6 +67,23 @@ impl Default for PortScanOptions {
     }
 }
 
+/// How many connections a port that stays silent gets in all (see the
+/// module comment). A reset ends the attempts early.
+const TCP_ATTEMPTS: usize = 2;
+
+/// What a connection attempt learned about a TCP port.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TcpState {
+    /// The handshake completed: a service is listening.
+    Open,
+    /// The host answered with a reset ("connection refused"): nothing
+    /// listens there.
+    Closed,
+    /// Nothing came back in time: a firewall dropping the probe, or a lost
+    /// packet, which one attempt cannot tell apart.
+    Filtered,
+}
+
 /// Try a TCP connection to every (host, port) pair and add the open ones to
 /// `host.open_ports`, with their service names. A port a host already lists
 /// is not added twice; each host's list ends up sorted.
@@ -70,27 +96,27 @@ pub async fn tcp_port_scan(
 ) {
     let ports: BTreeSet<u16> = ports.iter().copied().collect();
     let slots = Arc::new(Semaphore::new(options.concurrency.max(1)));
-    let mut attempts = JoinSet::new();
+    let mut probes = JoinSet::new();
     for (index, host) in hosts.iter().enumerate() {
         for &port in &ports {
             let address = SocketAddr::new(host.ip, port);
             let slots = Arc::clone(&slots);
             let timeout = options.timeout;
-            attempts.spawn(async move {
+            probes.spawn(async move {
                 let _slot = slots
                     .acquire_owned()
                     .await
                     .expect("the semaphore is never closed");
-                (index, port, tcp_connect(address, timeout).await)
+                (index, port, tcp_probe(address, timeout).await)
             });
         }
     }
-    let total = attempts.len();
+    let total = probes.len();
     let mut done = 0;
-    while let Some(result) = attempts.join_next().await {
+    while let Some(result) = probes.join_next().await {
         done += 1;
         progress(done, total);
-        let Ok((index, number, true)) = result else {
+        let Ok((index, number, TcpState::Open)) = result else {
             continue;
         };
         let host = &mut hosts[index];
@@ -112,18 +138,34 @@ pub async fn tcp_port_scan(
     }
 }
 
-/// True if a TCP connection to `address` is accepted within `timeout`. The
-/// connection is closed again straight away (dropping the stream does that).
-pub async fn tcp_connect(address: SocketAddr, timeout: Duration) -> bool {
-    matches!(
-        tokio::time::timeout(timeout, TcpStream::connect(address)).await,
-        Ok(Ok(_))
-    )
+/// Up to [`TCP_ATTEMPTS`] connections to `address`, stopping at the first
+/// answer either way: only silence earns another try.
+async fn tcp_probe(address: SocketAddr, timeout: Duration) -> TcpState {
+    let mut state = TcpState::Filtered;
+    for _ in 0..TCP_ATTEMPTS {
+        state = tcp_connect(address, timeout).await;
+        if state != TcpState::Filtered {
+            break;
+        }
+    }
+    state
+}
+
+/// One TCP connection to `address`, given `timeout` to complete. An
+/// accepted connection is closed again straight away (dropping the stream
+/// does that). Errors other than a reset (no route, say) are not the port's
+/// doing and count as silence.
+async fn tcp_connect(address: SocketAddr, timeout: Duration) -> TcpState {
+    match tokio::time::timeout(timeout, TcpStream::connect(address)).await {
+        Ok(Ok(_stream)) => TcpState::Open,
+        Ok(Err(err)) if err.kind() == std::io::ErrorKind::ConnectionRefused => TcpState::Closed,
+        Ok(Err(_)) | Err(_) => TcpState::Filtered, // some other error, or the time ran out
+    }
 }
 
 /// What a UDP probe learned about a port (see the module comment).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UdpState {
+enum UdpState {
     /// Something answered: a service is listening.
     Open,
     /// Nothing came back: a service that ignores strangers, or a firewall.
@@ -133,7 +175,7 @@ pub enum UdpState {
 }
 
 impl UdpState {
-    pub fn name(self) -> &'static str {
+    fn name(self) -> &'static str {
         match self {
             UdpState::Open => "open",
             UdpState::OpenOrFiltered => "open|filtered",
@@ -143,7 +185,8 @@ impl UdpState {
 }
 
 /// Send one datagram to every (host, port) pair and add the ports that did
-/// not refuse to `host.open_ports`, each with its [`UdpState`] as `state`.
+/// not refuse to `host.open_ports`, each with its state ("open", or
+/// "open|filtered" for silence) as `state`.
 /// One host's ports are probed one after another, with `concurrency` hosts
 /// at a time: Linux sends at most about one "port unreachable" a second to
 /// one address once a short burst is spent, and two probes at once would
@@ -212,7 +255,7 @@ pub async fn udp_port_scan(
 /// ICMP "port unreachable" to this socket, as a read that fails with
 /// "connection refused". Anything else that goes wrong (no route, the host
 /// gone) is not the port's doing and counts as silence.
-pub async fn udp_probe(address: SocketAddr, timeout: Duration) -> UdpState {
+async fn udp_probe(address: SocketAddr, timeout: Duration) -> UdpState {
     let unspecified = match address.ip() {
         IpAddr::V4(_) => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
         IpAddr::V6(_) => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
@@ -234,7 +277,7 @@ pub async fn udp_probe(address: SocketAddr, timeout: Duration) -> UdpState {
 
 /// The well-known name of a port ("ssh" for 22/tcp) from the system's
 /// services table, `/etc/services`, if it lists one.
-pub fn service_name(port: u16, proto: Proto) -> Option<String> {
+fn service_name(port: u16, proto: Proto) -> Option<String> {
     static TABLE: OnceLock<HashMap<(u16, Proto), String>> = OnceLock::new();
     TABLE
         .get_or_init(|| {
@@ -250,7 +293,7 @@ pub fn service_name(port: u16, proto: Proto) -> Option<String> {
 /// `ssh   22/tcp   # SSH Remote Login Protocol` (name, port/protocol,
 /// aliases, comment); when a port is listed twice the first name wins, as
 /// with `getservbyport`.
-pub fn parse_services(text: &str) -> HashMap<(u16, Proto), String> {
+fn parse_services(text: &str) -> HashMap<(u16, Proto), String> {
     let mut table = HashMap::new();
     for line in text.lines() {
         let line = line.split('#').next().unwrap_or_default();
@@ -275,9 +318,32 @@ pub fn parse_services(text: &str) -> HashMap<(u16, Proto), String> {
     table
 }
 
+/// What is wrong with a port list as typed (see [`parse_port_list`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PortListError {
+    /// A part that is neither a number nor a range of two.
+    NotAPort(String),
+    /// A number outside 1..=65535, or a range written high to low.
+    OutOfRange(String),
+    /// Nothing but commas and spaces.
+    Empty,
+}
+
+impl fmt::Display for PortListError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PortListError::NotAPort(part) => write!(f, "not a port or range: {part:?}"),
+            PortListError::OutOfRange(part) => write!(f, "port out of range: {part}"),
+            PortListError::Empty => write!(f, "no ports given"),
+        }
+    }
+}
+
+impl std::error::Error for PortListError {}
+
 /// "22,80,8000-8010" -> [22, 80, 8000, ..., 8010], sorted, each port once;
 /// "common" -> [`COMMON_TCP_PORTS`].
-pub fn parse_port_list(text: &str) -> Result<Vec<u16>, String> {
+pub fn parse_port_list(text: &str) -> Result<Vec<u16>, PortListError> {
     if text.trim().eq_ignore_ascii_case("common") {
         return Ok(COMMON_TCP_PORTS.to_vec());
     }
@@ -285,15 +351,15 @@ pub fn parse_port_list(text: &str) -> Result<Vec<u16>, String> {
     for part in text.split(',').map(str::trim).filter(|p| !p.is_empty()) {
         let (low, high) = part.split_once('-').unwrap_or((part, part));
         let (Ok(first), Ok(last)) = (low.trim().parse::<u32>(), high.trim().parse::<u32>()) else {
-            return Err(format!("not a port or range: {part:?}"));
+            return Err(PortListError::NotAPort(part.to_string()));
         };
         if !(1 <= first && first <= last && last <= 65535) {
-            return Err(format!("port out of range: {part}"));
+            return Err(PortListError::OutOfRange(part.to_string()));
         }
         ports.extend((first..=last).map(|p| p as u16));
     }
     if ports.is_empty() {
-        return Err("no ports given".to_string());
+        return Err(PortListError::Empty);
     }
     Ok(ports.into_iter().collect())
 }
@@ -362,13 +428,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connect_is_true_only_for_a_listening_port() {
+    async fn a_connection_is_accepted_refused_or_unanswered() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let timeout = Duration::from_millis(500);
-        assert!(tcp_connect(listener.local_addr().unwrap(), timeout).await);
+        assert_eq!(
+            tcp_connect(listener.local_addr().unwrap(), timeout).await,
+            TcpState::Open
+        );
         let (_held, closed) = closed_port();
         let refused = SocketAddr::from((Ipv4Addr::LOCALHOST, closed));
-        assert!(!tcp_connect(refused, timeout).await);
+        assert_eq!(tcp_connect(refused, timeout).await, TcpState::Closed);
+        // Reserved for documentation: nothing ever answers there, so the
+        // time runs out (or, on a machine with no route out, the kernel
+        // refuses to send, which is not the port's doing either).
+        let nowhere = SocketAddr::from((Ipv4Addr::new(192, 0, 2, 1), 80));
+        assert_eq!(tcp_connect(nowhere, timeout).await, TcpState::Filtered);
+    }
+
+    /// Only silence earns a second connection: a port that answers, either
+    /// way, is settled by its first.
+    #[tokio::test]
+    async fn a_silent_port_is_tried_once_more_and_an_answer_ends_the_attempts() {
+        let timeout = Duration::from_millis(300);
+        let (_held, closed) = closed_port();
+        let refused = SocketAddr::from((Ipv4Addr::LOCALHOST, closed));
+        let started = std::time::Instant::now();
+        assert_eq!(tcp_probe(refused, timeout).await, TcpState::Closed);
+        assert!(started.elapsed() < timeout, "a reset is final");
+
+        let nowhere = SocketAddr::from((Ipv4Addr::new(192, 0, 2, 1), 80));
+        let one = std::time::Instant::now();
+        assert_eq!(tcp_connect(nowhere, timeout).await, TcpState::Filtered);
+        let waited = one.elapsed() >= timeout; // false when there is no route out
+        let started = std::time::Instant::now();
+        assert_eq!(tcp_probe(nowhere, timeout).await, TcpState::Filtered);
+        if waited {
+            let elapsed = started.elapsed();
+            assert!(
+                elapsed >= 2 * timeout && elapsed < 4 * timeout,
+                "{TCP_ATTEMPTS} attempts of {timeout:?}: {elapsed:?}"
+            );
+        }
     }
 
     /// Three UDP ports on this machine: one that answers, one that stays
@@ -422,7 +522,7 @@ mod tests {
             .map(|p| (p.number, p.state.as_deref().unwrap_or("?")))
             .collect();
         let mut expected = vec![(open, "open"), (silent, "open|filtered")];
-        expected.sort();
+        expected.sort_unstable();
         assert_eq!(found, expected, "the closed port is not listed");
         assert!(hosts[0].open_ports.iter().all(|p| p.proto == Proto::Udp));
         drop(quiet);
@@ -471,22 +571,12 @@ mod tests {
         assert_eq!(parse_port_list(" 80 , 22,22, "), Ok(vec![22, 80]));
         assert_eq!(parse_port_list("Common"), Ok(COMMON_TCP_PORTS.to_vec()));
         assert_eq!(parse_port_list("65535"), Ok(vec![65535]));
-        assert_eq!(
-            parse_port_list("http"),
-            Err("not a port or range: \"http\"".to_string())
-        );
-        assert_eq!(
-            parse_port_list("0"),
-            Err("port out of range: 0".to_string())
-        );
-        assert_eq!(
-            parse_port_list("90-80"),
-            Err("port out of range: 90-80".to_string())
-        );
-        assert_eq!(
-            parse_port_list("70000"),
-            Err("port out of range: 70000".to_string())
-        );
-        assert_eq!(parse_port_list(" , "), Err("no ports given".to_string()));
+        let text = |text: &str| parse_port_list(text).unwrap_err().to_string();
+        assert_eq!(text("http"), "not a port or range: \"http\"");
+        assert_eq!(text("0"), "port out of range: 0");
+        assert_eq!(text("90-80"), "port out of range: 90-80");
+        assert_eq!(text("70000"), "port out of range: 70000");
+        assert_eq!(parse_port_list(" , "), Err(PortListError::Empty));
+        assert_eq!(text(" , "), "no ports given");
     }
 }

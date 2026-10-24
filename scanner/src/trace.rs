@@ -106,9 +106,8 @@ pub async fn traceroute(target: Ipv4Addr, options: &TraceOptions) -> io::Result<
         rtt: None,
     };
     for ttl in 1..=options.max_hops.max(1) {
-        let answer = match socket.probe(ttl, options.timeout).await {
-            Ok(answer) => answer,
-            Err(_) => break, // the probe could not be sent: no route, say
+        let Ok(answer) = socket.probe(ttl, options.timeout).await else {
+            break; // the probe could not be sent: no route, say
         };
         match answer {
             Answer::Reply(rtt) => {
@@ -290,7 +289,7 @@ fn set_recv_error(socket: &Socket) -> io::Result<()> {
             socket.as_raw_fd(),
             libc::SOL_IP,
             libc::IP_RECVERR,
-            (&on as *const libc::c_int).cast(),
+            (&raw const on).cast(),
             size_of::<libc::c_int>() as libc::socklen_t,
         )
     };
@@ -324,12 +323,13 @@ fn read_queued_error(fd: RawFd, buffer: &mut [u8]) -> io::Result<Option<QueuedEr
     };
     // SAFETY: msghdr is plain data, and all zeros is a valid empty header.
     let mut header: libc::msghdr = unsafe { std::mem::zeroed() };
-    header.msg_iov = &mut iov;
+    header.msg_iov = &raw mut iov;
     header.msg_iovlen = 1;
     header.msg_control = control.as_mut_ptr().cast();
     header.msg_controllen = control.len() as _;
     // SAFETY: the header points at buffers that outlive the call.
-    let len = unsafe { libc::recvmsg(fd, &mut header, libc::MSG_ERRQUEUE | libc::MSG_DONTWAIT) };
+    let len =
+        unsafe { libc::recvmsg(fd, &raw mut header, libc::MSG_ERRQUEUE | libc::MSG_DONTWAIT) };
     if len < 0 {
         let err = io::Error::last_os_error();
         return if err.kind() == io::ErrorKind::WouldBlock {
@@ -338,16 +338,27 @@ fn read_queued_error(fd: RawFd, buffer: &mut [u8]) -> io::Result<Option<QueuedEr
             Err(err)
         };
     }
-    // SAFETY: CMSG_FIRSTHDR / CMSG_NXTHDR / CMSG_DATA only walk the control
-    // buffer the kernel just filled, within the length it reported.
-    let mut cmsg = unsafe { libc::CMSG_FIRSTHDR(&header) };
+    // The CMSG_* macros walk the control buffer the kernel just filled, and
+    // only within the length it wrote back into the header; each pointer
+    // they return is either null or points into that buffer.
+    // SAFETY: `header` describes `control`, filled by the recvmsg above.
+    let mut cmsg = unsafe { libc::CMSG_FIRSTHDR(&raw const header) };
     while !cmsg.is_null() {
+        // SAFETY: `cmsg` is not null, so it points at a control message
+        // header inside `control`.
         let (level, kind) = unsafe { ((*cmsg).cmsg_level, (*cmsg).cmsg_type) };
         if level == libc::SOL_IP && kind == libc::IP_RECVERR {
-            let ee = unsafe { libc::CMSG_DATA(cmsg).cast::<libc::sock_extended_err>() };
-            let error = unsafe { ee.read_unaligned() };
+            // SAFETY: the data of an IP_RECVERR message is a sock_extended_err
+            // (followed by the offender's address), still inside `control`;
+            // `read_unaligned` because CMSG_DATA promises no alignment.
+            let (ee, error) = unsafe {
+                let ee = libc::CMSG_DATA(cmsg).cast::<libc::sock_extended_err>();
+                (ee, ee.read_unaligned())
+            };
             let router = (error.ee_origin == libc::SO_EE_ORIGIN_ICMP).then(|| {
-                // SO_EE_OFFENDER: the sockaddr right behind the struct.
+                // SAFETY: with origin ICMP the kernel put the sender's
+                // sockaddr_in right behind the struct, which is where
+                // SO_EE_OFFENDER points; read unaligned for the same reason.
                 let sender = unsafe {
                     libc::SO_EE_OFFENDER(ee)
                         .cast::<libc::sockaddr_in>()
@@ -361,7 +372,9 @@ fn read_queued_error(fd: RawFd, buffer: &mut [u8]) -> io::Result<Option<QueuedEr
                 router,
             }));
         }
-        cmsg = unsafe { libc::CMSG_NXTHDR(&header, cmsg) };
+        // SAFETY: same header and buffer as CMSG_FIRSTHDR above; `cmsg` is a
+        // control message inside it.
+        cmsg = unsafe { libc::CMSG_NXTHDR(&raw const header, cmsg) };
     }
     Ok(None)
 }
@@ -407,7 +420,7 @@ mod tests {
         let targets = [Ipv4Addr::new(192, 0, 2, 1), Ipv4Addr::LOCALHOST];
         let mut calls = Vec::new();
         let paths = trace_paths(&targets, &quick(), 2, |done, total| {
-            calls.push((done, total))
+            calls.push((done, total));
         })
         .await
         .unwrap();

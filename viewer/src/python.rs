@@ -1,18 +1,18 @@
-//! The embedded Python interpreter (PyO3), for the parts of Netvisualizer
+//! The embedded Python interpreter (`PyO3`), for the parts of Netvisualizer
 //! that stay in Python: the MAC vendor lookup (Milestone 6) and the
-//! SSH/Telnet console (Milestone 13). Their code lives in the `netvisualizer`
-//! package at the repo root.
+//! SSH/Telnet console (Milestone 13). Their code is the `netvisualizer`
+//! package in the repo's `python/` directory.
 //!
 //! The binary links the system's libpython (the one `.venv` was made from),
 //! so the interpreter runs inside this process: no `python` subprocess, and
 //! Rust values go in and out as Python objects. An embedded interpreter
 //! knows nothing about the repo or its virtual environment, so the first use
-//! puts the repo root (for `import netvisualizer`) and `.venv`'s
-//! site-packages (for pandas, asyncssh, ...) on `sys.path`.
+//! puts the repo's `python/` directory (for `import netvisualizer`) and
+//! `.venv`'s site-packages (for pandas, asyncssh, ...) on `sys.path`.
 //!
-//! Python errors come back as one line of text ("ModuleNotFoundError: No
-//! module named 'pandas'"): a feature that needs Python skips itself with
-//! that message instead of stopping the program.
+//! Python errors come back as one line of text, such as
+//! `ModuleNotFoundError: No module named 'pandas'`: a feature that needs
+//! Python skips itself with that message instead of stopping the program.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -25,7 +25,8 @@ use pyo3::sync::PyOnceLock;
 pub struct Interpreter {
     /// The interpreter's version, e.g. "3.14.8".
     pub version: String,
-    /// The directory `import netvisualizer` finds the package in: the repo root.
+    /// The directory `import netvisualizer` finds the package in: `python/`
+    /// in the repo.
     pub package_root: PathBuf,
     /// The virtual environment's site-packages, if there is one.
     pub site_packages: Option<PathBuf>,
@@ -88,7 +89,7 @@ pub fn describe() -> String {
 }
 
 fn set_up(py: Python<'_>) -> PyResult<Interpreter> {
-    let package_root = repo_root();
+    let package_root = repo_root().join("python");
     // As text: the import system skips sys.path entries that are not str.
     py.import("sys")?
         .getattr("path")?

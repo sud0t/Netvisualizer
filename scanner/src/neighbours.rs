@@ -32,7 +32,7 @@ pub struct Neighbour {
 
 /// The kernel's table, or an empty one where it cannot be read (it is only
 /// read from `/proc/net/arp`, so outside Linux no MACs are known).
-pub fn arp_table() -> Vec<Neighbour> {
+fn arp_table() -> Vec<Neighbour> {
     std::fs::read_to_string("/proc/net/arp")
         .map(|text| parse_arp_table(&text))
         .unwrap_or_default()
@@ -52,7 +52,7 @@ const ATF_COM: u32 = 0x02; // completed: the MAC is known
 /// Flags 0x2 means the entry is complete. 0x0 is one still waiting for an
 /// answer (or that never got one), with an all-zero MAC; those rows, and
 /// rows that do not parse, are skipped.
-pub fn parse_arp_table(text: &str) -> Vec<Neighbour> {
+fn parse_arp_table(text: &str) -> Vec<Neighbour> {
     text.lines().skip(1).filter_map(parse_arp_line).collect()
 }
 
@@ -78,7 +78,7 @@ fn parse_arp_line(line: &str) -> Option<Neighbour> {
 /// `/sys/class/net/<interface>/address`. `None` when there is no such
 /// interface, or it has no hardware address (loopback and tunnels report
 /// all zeros).
-pub fn own_mac(interface: &str) -> Option<MacAddr> {
+pub(crate) fn own_mac(interface: &str) -> Option<MacAddr> {
     let text = std::fs::read_to_string(format!("/sys/class/net/{interface}/address")).ok()?;
     text.trim()
         .parse()
@@ -88,7 +88,7 @@ pub fn own_mac(interface: &str) -> Option<MacAddr> {
 
 /// The kernel's number for `interface` (`/sys/class/net/<interface>/ifindex`),
 /// which is how a packet socket names the interface it binds to.
-pub fn interface_index(interface: &str) -> Option<i32> {
+pub(crate) fn interface_index(interface: &str) -> Option<i32> {
     std::fs::read_to_string(format!("/sys/class/net/{interface}/ifindex"))
         .ok()?
         .trim()
@@ -164,7 +164,8 @@ garbage
         );
         assert_eq!(table[1].ip, Ipv4Addr::new(192, 168, 1, 254));
         assert_eq!(table[2].interface, "virbr0");
-        assert!(parse_arp_table("header only\n").is_empty());
+        let table = parse_arp_table("header only\n");
+        assert!(table.is_empty(), "{table:?}");
     }
 
     #[test]

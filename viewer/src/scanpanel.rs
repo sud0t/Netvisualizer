@@ -14,11 +14,11 @@ use bevy_egui::{EguiContexts, egui};
 use scanner::local;
 use scanner::ports::{COMMON_TCP_PORTS, COMMON_UDP_PORTS, parse_port_list};
 
+use crate::cli::{parse_network, parse_seconds};
 use crate::panel::card;
 use crate::scan::{ScanJob, ScanSettings, StartScan};
 use crate::theme;
 use crate::ui::{EDGE, mono, text};
-use crate::{parse_network, parse_seconds};
 
 /// The card's fields, as typed; [`ScanForm::settings`] reads them.
 #[derive(Resource, Debug, Clone, PartialEq, Eq)]
@@ -113,7 +113,7 @@ fn ports(text: &str, common: &[u16]) -> Result<Vec<u16>, String> {
     } else if text.eq_ignore_ascii_case("common") {
         Ok(common.to_vec())
     } else {
-        parse_port_list(text)
+        parse_port_list(text).map_err(|err| err.to_string())
     }
 }
 

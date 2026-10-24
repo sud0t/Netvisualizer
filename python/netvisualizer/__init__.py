@@ -5,9 +5,9 @@ them). It runs this package inside its own process through PyO3
 (``viewer/src/python.rs``), for the parts that stay in Python: the MAC vendor
 lookup (Milestone 6) and the SSH/Telnet console (Milestone 13).
 
-Before the first import, the program puts the repo root and ``.venv``'s
-site-packages on ``sys.path``, so packages installed into ``.venv`` with pip
-are importable here.
+Before the first import, the program puts this package's parent directory
+(``python/``) and ``.venv``'s site-packages on ``sys.path``, so the packages
+``uv sync`` installs into ``.venv`` are importable here.
 """
 
 from importlib.util import find_spec

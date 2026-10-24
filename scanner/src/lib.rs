@@ -15,7 +15,7 @@
 //! decides which ones run and in what order (`viewer/src/scan.rs`).
 
 pub mod arp;
-pub mod icmp;
+mod icmp;
 pub mod local;
 pub mod model;
 pub mod names;

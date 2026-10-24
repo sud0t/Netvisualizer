@@ -19,29 +19,29 @@
 //! `struct.pack("!BBHHH", ...)` / `struct.unpack` would.
 
 /// `type` of an echo reply.
-pub const ECHO_REPLY: u8 = 0;
+const ECHO_REPLY: u8 = 0;
 /// `type` of "destination unreachable": a router (or the host) could not
 /// deliver the packet; the code says why (3 = the port is closed).
-pub const DESTINATION_UNREACHABLE: u8 = 3;
+pub(crate) const DESTINATION_UNREACHABLE: u8 = 3;
 /// `type` of an echo request.
-pub const ECHO_REQUEST: u8 = 8;
+const ECHO_REQUEST: u8 = 8;
 /// `type` of "time exceeded": a router dropped the packet because its TTL
 /// ran out there. What traceroute listens for.
-pub const TIME_EXCEEDED: u8 = 11;
+pub(crate) const TIME_EXCEEDED: u8 = 11;
 /// Bytes before the data.
-pub const HEADER_LEN: usize = 8;
+const HEADER_LEN: usize = 8;
 
 /// The parts of an echo message the sweep cares about.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Echo {
-    pub identifier: u16,
-    pub sequence: u16,
-    pub data: Vec<u8>,
+pub(crate) struct Echo {
+    pub(crate) identifier: u16,
+    pub(crate) sequence: u16,
+    pub(crate) data: Vec<u8>,
 }
 
 impl Echo {
     /// This message as the bytes of an echo request, checksum filled in.
-    pub fn request_bytes(&self) -> Vec<u8> {
+    pub(crate) fn request_bytes(&self) -> Vec<u8> {
         let mut packet = Vec::with_capacity(HEADER_LEN + self.data.len());
         packet.push(ECHO_REQUEST); // type
         packet.push(0); // code
@@ -57,7 +57,7 @@ impl Echo {
     /// Read an echo reply that starts at the ICMP header. `None` for anything
     /// else: other ICMP messages, requests (a raw socket sees those too),
     /// packets too short to be an echo, or damaged ones.
-    pub fn parse_reply(packet: &[u8]) -> Option<Echo> {
+    pub(crate) fn parse_reply(packet: &[u8]) -> Option<Echo> {
         if packet.len() < HEADER_LEN || packet[0] != ECHO_REPLY || packet[1] != 0 {
             return None;
         }
@@ -77,7 +77,7 @@ impl Echo {
 /// carry out of the top 16 bits back into the bottom, and flip all the bits.
 /// Run over a whole message, its own checksum field included, it gives 0
 /// when nothing was damaged on the way.
-pub fn checksum(bytes: &[u8]) -> u16 {
+fn checksum(bytes: &[u8]) -> u16 {
     let mut sum: u32 = 0;
     for pair in bytes.chunks(2) {
         let low = pair.get(1).copied().unwrap_or(0);
@@ -93,7 +93,7 @@ pub fn checksum(bytes: &[u8]) -> u16 {
 /// skips it. The header's length is the low four bits of its first byte,
 /// counted in 32-bit words (5, so 20 bytes, without options); the high four
 /// bits are the IP version.
-pub fn strip_ipv4_header(packet: &[u8]) -> Option<&[u8]> {
+pub(crate) fn strip_ipv4_header(packet: &[u8]) -> Option<&[u8]> {
     let first = *packet.first()?;
     if first >> 4 != 4 {
         return None;

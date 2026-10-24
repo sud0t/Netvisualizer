@@ -11,8 +11,45 @@ resolver = "3"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+# What Bevy 0.20 needs; rust-toolchain.toml pins the compiler actually used.
+rust-version = "1.97.1"
 license = "MIT"
 publish = false
+
+# Crates both members use: one version here, `workspace = true` there (a
+# member may add features of its own on top).
+[workspace.dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+# preserve_order keeps a host's fields in the order they were written, so
+# the viewer's generic details card lists them in that order too.
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+tokio = "1.54.1"
+pyo3 = "0.30.1"
+pyo3-build-config = "0.30.1"
+
+# `[lints] workspace = true` in both crates. Clippy's pedantic group, minus
+# what Bevy code trips over all the time and the polish meant for published
+# libraries, plus a safety comment on every unsafe block.
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# A Bevy system takes its parameters by value (Res<T>, Query<…>); that is
+# the API, not a choice.
+needless_pass_by_value = "allow"
+# The viewer converts between the float and integer sizes of pixels, frames
+# and counts all the time; a lint on every one would drown the real ones.
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+# ScanSettings is one flag per command-line switch.
+struct_excessive_bools = "allow"
+# Written for a published library's users; nobody builds on these crates
+# (publish = false), and every fallible function says in prose what fails.
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# Every unsafe block carries a `// SAFETY:` comment saying why it is sound.
+undocumented_unsafe_blocks = "warn"
 
 # Bevy's recommended profiles: our own code unoptimised for quick compiles,
 # every dependency (Bevy, wgpu, tokio) optimised so the dev build still renders

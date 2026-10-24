@@ -289,8 +289,8 @@ pub fn frame_camera(
     let tan_bottom = (height / 2.0 - y0) * tan_per_px;
     let tan_top = (y1 - height / 2.0) * tan_per_px;
     // Half-angles of the usable region, and how far its centre sits off the view axis.
-    let tan_half_w = (tan_left + tan_right) / 2.0;
-    let tan_half_h = (tan_top + tan_bottom) / 2.0;
+    let tan_half_w = f32::midpoint(tan_left, tan_right);
+    let tan_half_h = f32::midpoint(tan_top, tan_bottom);
     let shift_right = (tan_left - tan_right) / 2.0; // > 0 when the usable centre is left of the viewport centre
     let shift_up = (tan_bottom - tan_top) / 2.0; // > 0 when the usable centre is below it
 
@@ -351,7 +351,7 @@ fn usable_span(lo: f32, hi: f32, full: f32) -> (f32, f32) {
     if hi - lo >= min_width {
         return (lo, hi);
     }
-    let center = ((lo + hi) / 2.0).clamp(min_width / 2.0, full - min_width / 2.0);
+    let center = f32::midpoint(lo, hi).clamp(min_width / 2.0, full - min_width / 2.0);
     (center - min_width / 2.0, center + min_width / 2.0)
 }
 

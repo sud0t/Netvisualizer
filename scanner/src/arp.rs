@@ -49,14 +49,13 @@ use crate::local::LocalNetwork;
 use crate::model::{Host, MacAddr};
 use crate::neighbours;
 
-/// The EtherType that says an ARP message follows the Ethernet header.
-pub const ETHERTYPE_ARP: u16 = 0x0806;
+/// The `EtherType` that says an ARP message follows the Ethernet header.
+const ETHERTYPE_ARP: u16 = 0x0806;
 const HARDWARE_ETHERNET: u16 = 1;
 const PROTOCOL_IPV4: u16 = 0x0800;
-pub const REQUEST: u16 = 1;
-pub const REPLY: u16 = 2;
+const REQUEST: u16 = 1;
 /// An Ethernet/IPv4 ARP frame: 14 bytes of Ethernet header, 28 of ARP.
-pub const FRAME_LEN: usize = 42;
+const FRAME_LEN: usize = 42;
 const BROADCAST: MacAddr = MacAddr::new([0xff; 6]);
 
 /// Addresses that stay silent are asked this many times in all. Wi-Fi
@@ -71,7 +70,7 @@ const FULL_QUEUE_RETRIES: usize = 1000;
 
 /// The fields of an ARP message (the Ethernet header around it is not kept).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Arp {
+struct Arp {
     pub operation: u16,
     pub sender_mac: MacAddr,
     pub sender_ip: Ipv4Addr,
@@ -81,7 +80,7 @@ pub struct Arp {
 
 impl Arp {
     /// The whole frame of a request from `sender` for `target`'s MAC.
-    pub fn request(sender_mac: MacAddr, sender_ip: Ipv4Addr, target: Ipv4Addr) -> [u8; FRAME_LEN] {
+    fn request(sender_mac: MacAddr, sender_ip: Ipv4Addr, target: Ipv4Addr) -> [u8; FRAME_LEN] {
         let mut frame = [0u8; FRAME_LEN];
         frame[0..6].copy_from_slice(&BROADCAST.octets());
         frame[6..12].copy_from_slice(&sender_mac.octets());
@@ -99,9 +98,9 @@ impl Arp {
     }
 
     /// The ARP message in a frame, or `None` when the frame is something
-    /// else: another EtherType, other address sizes, or too short. (Longer
+    /// else: another `EtherType`, other address sizes, or too short. (Longer
     /// is fine: Ethernet pads short frames to 60 bytes.)
-    pub fn parse(frame: &[u8]) -> Option<Arp> {
+    fn parse(frame: &[u8]) -> Option<Arp> {
         if frame.len() < FRAME_LEN {
             return None;
         }
@@ -239,7 +238,7 @@ impl PacketSocket {
                     sent += 1;
                     progress(sent.min(total), total);
                 }
-                self.read_waiting(network, &mut found, &mut buffer)?;
+                self.read_waiting(*network, &mut found, &mut buffer)?;
             }
             // Then listen until the timeout since the last request runs out.
             let deadline = Instant::now() + timeout;
@@ -250,7 +249,7 @@ impl PacketSocket {
                         let mut guard = ready?;
                         // `Read` for `&Socket` is `recv`: one frame per call.
                         match guard.try_io(|fd| fd.get_ref().read(&mut buffer)) {
-                            Ok(len) => self.record(&buffer[..len?], network, &mut found),
+                            Ok(len) => self.record(&buffer[..len?], *network, &mut found),
                             Err(_would_block) => {}
                         }
                     }
@@ -300,7 +299,7 @@ impl PacketSocket {
     /// Read every frame already waiting, without blocking.
     fn read_waiting(
         &self,
-        network: &Ipv4Net,
+        network: Ipv4Net,
         found: &mut BTreeMap<Ipv4Addr, MacAddr>,
         buffer: &mut [u8],
     ) -> io::Result<()> {
@@ -317,7 +316,7 @@ impl PacketSocket {
     /// proves that sender is up and says its MAC: a reply to us, or a
     /// request of its own that we overheard. Our own requests come back
     /// too (a packet socket sees outgoing frames) and are skipped.
-    fn record(&self, frame: &[u8], network: &Ipv4Net, found: &mut BTreeMap<Ipv4Addr, MacAddr>) {
+    fn record(&self, frame: &[u8], network: Ipv4Net, found: &mut BTreeMap<Ipv4Addr, MacAddr>) {
         let Some(arp) = Arp::parse(frame) else {
             return;
         };
@@ -333,7 +332,7 @@ impl PacketSocket {
 }
 
 /// A packet socket's address (`struct sockaddr_ll`): the interface, by
-/// index, and the EtherType. The other fields only matter for sending with
+/// index, and the `EtherType`. The other fields only matter for sending with
 /// `sendto` on a `SOCK_DGRAM` packet socket, where the kernel builds the
 /// Ethernet header; ours is `SOCK_RAW` and the frame carries its own.
 fn link_address(index: i32) -> SockAddr {
@@ -364,6 +363,9 @@ fn link_address(index: i32) -> SockAddr {
 mod tests {
     use super::*;
     use crate::local;
+
+    /// The operation of a reply (the code only ever sends requests).
+    const REPLY: u16 = 2;
 
     fn mac(text: &str) -> MacAddr {
         text.parse().unwrap()
@@ -468,8 +470,8 @@ mod tests {
         };
         match PacketSocket::open(&network) {
             Ok(socket) => assert_eq!(socket.ip, network.ip), // running with CAP_NET_RAW
-            Err(ArpError::NotPermitted(_)) => {}
-            Err(ArpError::NoLink(_)) => {} // a VPN tunnel first in the list
+            // No CAP_NET_RAW, or a VPN tunnel first in the list.
+            Err(ArpError::NotPermitted(_) | ArpError::NoLink(_)) => {}
             Err(ArpError::Io(err)) => panic!("{err}"),
         }
         let unprivileged = ArpError::NotPermitted(io::Error::from_raw_os_error(libc::EPERM));

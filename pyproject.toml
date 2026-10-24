@@ -1,0 +1,17 @@
+# The Python the program embeds (python/netvisualizer, through PyO3) and
+# what it imports. Not a package anyone installs: `uv sync` makes `.venv`
+# from uv's CPython 3.15 with exactly these packages, and the binary puts
+# that .venv's site-packages on sys.path (viewer/src/python.rs).
+[project]
+name = "netvisualizer"
+version = "0.1.0"
+description = "The Python side of Netvisualizer: the MAC vendor lookup, later the SSH console"
+requires-python = ">=3.15"
+dependencies = [
+    "pandas>=3.0",   # python/netvisualizer/vendors.py: the IEEE vendor table
+    "asyncssh>=2.0", # the SSH console (Milestone 13)
+]
+
+[tool.uv]
+# A plain environment: nothing to build or install, only the dependencies.
+package = false

@@ -210,6 +210,7 @@ pub fn spawn(plan: ScanPlan) -> (Receiver<ScanEvent>, Arc<Notify>) {
 }
 
 /// The stages, in order (see the module comment).
+#[allow(clippy::too_many_lines)] // one stage after another; Milestone 12 breaks it into jobs
 async fn run(plan: &ScanPlan, tx: &Sender<ScanEvent>) -> Result<(), String> {
     let settings = &plan.settings;
     let mut report = Reporter::new(plan, tx);
@@ -291,7 +292,7 @@ async fn run(plan: &ScanPlan, tx: &Sender<ScanEvent>) -> Result<(), String> {
         "ping_sweep" => "ping",
         _ => "ARP or ping",
     };
-    keep_gateway(&mut hosts, plan.local.gateway, &plan.network, probe);
+    keep_gateway(&mut hosts, plan.local.gateway, plan.network, probe);
     local::mark_local(&mut hosts, &plan.local.network);
 
     // Hosts beyond our link: which routers do the packets pass on the way?
@@ -319,9 +320,21 @@ async fn run(plan: &ScanPlan, tx: &Sender<ScanEvent>) -> Result<(), String> {
                 let mut routers = 0;
                 for path in &paths {
                     for router in path.routers() {
-                        if !hosts.iter().any(|h| h.ip == IpAddr::V4(router)) {
-                            hosts.push(scanner::Host::new(router));
-                            routers += 1;
+                        match hosts.iter_mut().find(|h| h.ip == IpAddr::V4(router)) {
+                            None => {
+                                hosts.push(scanner::Host::new(router));
+                                routers += 1;
+                            }
+                            // A gateway that ignored the sweep (see
+                            // keep_gateway) but answered a probe here is up
+                            // after all.
+                            Some(host) => {
+                                if host.extra.get("status").and_then(Value::as_str) == Some("down")
+                                {
+                                    host.extra.remove("status");
+                                    host.extra.remove("note");
+                                }
+                            }
                         }
                     }
                     if let Some(host) = hosts.iter_mut().find(|h| h.ip == IpAddr::V4(path.target)) {
@@ -434,13 +447,13 @@ async fn run(plan: &ScanPlan, tx: &Sender<ScanEvent>) -> Result<(), String> {
 
 /// Keep the gateway on the map even when the sweep did not find it. Inside
 /// the swept network that means it ignored the `probe` ("ping", which many
-/// routers drop), and it is drawn greyed out. Outside it, it was never
-/// probed, but the swept hosts are reached through it, so it is drawn like
-/// any other host.
+/// routers drop), and it is drawn greyed out unless a traceroute later
+/// hears from it. Outside it, it was never probed, but the swept hosts are
+/// reached through it, so it is drawn like any other host.
 fn keep_gateway(
     hosts: &mut Vec<scanner::Host>,
     gateway: Option<Ipv4Addr>,
-    swept: &Ipv4Net,
+    swept: Ipv4Net,
     probe: &str,
 ) {
     let Some(gateway) = gateway else {

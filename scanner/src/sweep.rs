@@ -19,6 +19,10 @@
 //!
 //! At most `concurrency` probes wait for an answer at once, each for
 //! `timeout`; an answer frees its slot for the next address straight away.
+//! An address that stays silent is asked once more before it is given up
+//! on: Wi-Fi loses the odd frame, and the first request to an address the
+//! kernel has not talked to yet waits on the kernel's own ARP request
+//! first, so one lost frame would otherwise hide a host that is there.
 
 use std::collections::VecDeque;
 use std::hash::{BuildHasher, RandomState};
@@ -97,22 +101,17 @@ pub async fn ping_sweep(
 ) -> io::Result<Sweep> {
     let addresses: Vec<Ipv4Addr> = network.hosts().collect();
     let mut notes = Vec::new();
-    let (answered, method) = match IcmpSocket::open(&mut notes) {
-        Some(socket) => {
-            let method = socket.method;
-            (
-                socket
-                    .sweep(&addresses, options, &mut notes, &mut progress)
-                    .await?,
-                method,
-            )
-        }
-        None => {
-            notes.push("no ICMP socket available, so one `ping` process per address".to_string());
-            let answered =
-                sweep_with_ping_command(&addresses, options, &mut notes, &mut progress).await?;
-            (answered, Method::SystemPing)
-        }
+    let (answered, method) = if let Some(socket) = IcmpSocket::open(&mut notes) {
+        let method = socket.method;
+        let answered = socket
+            .sweep(&addresses, options, &mut notes, &mut progress)
+            .await?;
+        (answered, method)
+    } else {
+        notes.push("no ICMP socket available, so one `ping` process per address".to_string());
+        let answered =
+            sweep_with_ping_command(&addresses, options, &mut notes, &mut progress).await?;
+        (answered, Method::SystemPing)
     };
     let hosts = addresses
         .iter()
@@ -128,11 +127,16 @@ pub async fn ping_sweep(
     })
 }
 
+/// How many echo requests an address that stays silent gets in all (see
+/// the module comment); the ARP sweep asks twice as well.
+const ATTEMPTS: u8 = 2;
+
 /// Where each probe stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Probe {
     NotSent,
-    Waiting,
+    /// Sent this many times, the last one still unanswered.
+    Waiting(u8),
     Answered,
     /// No answer within the timeout (yet: a late reply still counts).
     TimedOut,
@@ -160,8 +164,20 @@ impl Tally {
     }
 
     fn sent(&mut self, index: usize) {
-        self.probes[index] = Probe::Waiting;
+        self.probes[index] = Probe::Waiting(1);
         self.in_flight += 1;
+    }
+
+    /// The probe's time ran out and it was sent again: the slot stays taken.
+    fn resent(&mut self, index: usize) {
+        if let Probe::Waiting(attempts) = self.probes[index] {
+            self.probes[index] = Probe::Waiting(attempts + 1);
+        }
+    }
+
+    /// Sent again if it stays silent, or is it out of attempts?
+    fn may_retry(&self, index: usize) -> bool {
+        matches!(self.probes[index], Probe::Waiting(attempts) if attempts < ATTEMPTS)
     }
 
     fn refused(&mut self, index: usize) {
@@ -173,7 +189,7 @@ impl Tally {
     /// the host is up, it was just slow (or we were slow to read it).
     fn answered(&mut self, index: usize) {
         match self.probes[index] {
-            Probe::Waiting => {
+            Probe::Waiting(_) => {
                 self.in_flight -= 1;
                 self.done += 1;
             }
@@ -184,7 +200,7 @@ impl Tally {
     }
 
     fn timed_out(&mut self, index: usize) {
-        if self.probes[index] == Probe::Waiting {
+        if let Probe::Waiting(_) = self.probes[index] {
             self.probes[index] = Probe::TimedOut;
             self.in_flight -= 1;
             self.done += 1;
@@ -277,7 +293,7 @@ impl IcmpSocket {
             while next < total && tally.in_flight < options.concurrency.max(1) {
                 let index = next;
                 next += 1;
-                match self.send_probe(addresses[index], index, &token).await {
+                match self.send_probe(addresses[index], index, token).await {
                     Ok(()) => {
                         tally.sent(index);
                         waiting.push_back((Instant::now() + options.timeout, index));
@@ -288,7 +304,7 @@ impl IcmpSocket {
                         first_refusal.get_or_insert(err);
                     }
                 }
-                self.read_waiting(&mut buffer, addresses, &token, &mut tally)?;
+                self.read_waiting(&mut buffer, addresses, token, &mut tally)?;
             }
             let Some(&(deadline, _)) = waiting.front() else {
                 if tally.done != settled_before {
@@ -302,7 +318,7 @@ impl IcmpSocket {
                 biased; // a reply that is already here goes first
                 received = self.socket.recv_from(&mut buffer) => {
                     let (len, from) = received?;
-                    if let Some(index) = self.match_reply(&buffer[..len], from, addresses, &token) {
+                    if let Some(index) = self.match_reply(&buffer[..len], from, addresses, token) {
                         tally.answered(index);
                     }
                 }
@@ -310,15 +326,27 @@ impl IcmpSocket {
             }
             // Read every reply that is already waiting before giving up on
             // anyone.
-            self.read_waiting(&mut buffer, addresses, &token, &mut tally)?;
-            // Then time out every probe whose deadline has passed.
+            self.read_waiting(&mut buffer, addresses, token, &mut tally)?;
+            // Then every probe whose deadline has passed is sent once more,
+            // or given up on when it has had its attempts. (A resend that
+            // the system refuses counts as silence: the first one did go.)
             let now = Instant::now();
             while let Some(&(deadline, index)) = waiting.front() {
                 if deadline > now {
                     break;
                 }
                 waiting.pop_front();
-                tally.timed_out(index);
+                if tally.may_retry(index)
+                    && self
+                        .send_probe(addresses[index], index, token)
+                        .await
+                        .is_ok()
+                {
+                    tally.resent(index);
+                    waiting.push_back((Instant::now() + options.timeout, index));
+                } else {
+                    tally.timed_out(index);
+                }
             }
             if tally.done != settled_before {
                 progress(tally.done, total);
@@ -343,7 +371,7 @@ impl IcmpSocket {
         &self,
         buffer: &mut [u8],
         addresses: &[Ipv4Addr],
-        token: &[u8; 8],
+        token: [u8; 8],
         tally: &mut Tally,
     ) -> io::Result<()> {
         loop {
@@ -359,9 +387,9 @@ impl IcmpSocket {
         }
     }
 
-    async fn send_probe(&self, address: Ipv4Addr, index: usize, token: &[u8; 8]) -> io::Result<()> {
+    async fn send_probe(&self, address: Ipv4Addr, index: usize, token: [u8; 8]) -> io::Result<()> {
         let mut data = Vec::with_capacity(DATA_LEN);
-        data.extend_from_slice(token);
+        data.extend_from_slice(&token);
         data.extend_from_slice(&(index as u32).to_be_bytes());
         let packet = Echo {
             identifier: self.identifier,
@@ -381,7 +409,7 @@ impl IcmpSocket {
         packet: &[u8],
         from: SocketAddr,
         addresses: &[Ipv4Addr],
-        token: &[u8; 8],
+        token: [u8; 8],
     ) -> Option<usize> {
         let icmp = match self.method {
             Method::RawSocket => icmp::strip_ipv4_header(packet)?,
@@ -550,8 +578,8 @@ mod tests {
     }
 
     /// 192.0.2.0/24 is reserved for documentation: nothing ever answers
-    /// there, so the probe is given up after its timeout (or never leaves,
-    /// on a machine without a route).
+    /// there, so the probe is sent once more and then given up after its
+    /// second timeout (or never leaves, on a machine without a route).
     #[tokio::test]
     async fn silence_is_given_up_on_after_the_timeout() {
         let options = SweepOptions {
@@ -562,8 +590,17 @@ mod tests {
         let sweep = ping_sweep(&net("192.0.2.1/32"), &options, |_, _| {})
             .await
             .unwrap();
+        let elapsed = started.elapsed();
         assert!(sweep.hosts.is_empty(), "{sweep:?}");
-        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(elapsed < Duration::from_secs(5));
+        if sweep.notes.is_empty() {
+            // The probe went out (there is a route): two attempts' worth.
+            assert!(
+                elapsed >= 2 * options.timeout,
+                "{ATTEMPTS} attempts of {:?}: {elapsed:?}",
+                options.timeout
+            );
+        }
     }
 
     /// The fallback on its own, if this machine has a `ping` to fall back on.
@@ -576,7 +613,7 @@ mod tests {
         {
             return; // no ping installed: nothing to test
         }
-        let addresses = [Ipv4Addr::new(127, 0, 0, 1), Ipv4Addr::new(192, 0, 2, 1)];
+        let addresses = [Ipv4Addr::LOCALHOST, Ipv4Addr::new(192, 0, 2, 1)];
         let mut notes = Vec::new();
         let answered = sweep_with_ping_command(&addresses, &quick(2), &mut notes, &mut |_, _| {})
             .await
@@ -618,8 +655,26 @@ mod tests {
         assert_eq!((tally.in_flight, tally.done), (1, 2));
         assert_eq!(
             tally.probes,
-            [Probe::Answered, Probe::Answered, Probe::Waiting]
+            [Probe::Answered, Probe::Answered, Probe::Waiting(1)]
         );
+    }
+
+    /// A silent probe is sent again once; the slot stays taken meanwhile,
+    /// and the second silence is the end of it.
+    #[test]
+    fn the_tally_allows_one_more_attempt() {
+        let mut tally = Tally::new(1);
+        tally.sent(0);
+        assert!(tally.may_retry(0));
+        tally.resent(0);
+        assert_eq!(tally.probes[0], Probe::Waiting(2));
+        assert_eq!((tally.in_flight, tally.done), (1, 0));
+        assert!(!tally.may_retry(0), "{ATTEMPTS} attempts in all");
+        tally.timed_out(0);
+        assert_eq!((tally.in_flight, tally.done), (0, 1));
+        assert!(!tally.may_retry(0));
+        tally.resent(0); // not waiting: nothing to bump
+        assert_eq!(tally.probes[0], Probe::TimedOut);
     }
 
     #[test]
