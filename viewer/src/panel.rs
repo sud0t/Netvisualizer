@@ -293,7 +293,7 @@ fn refresh_rows(doc: Res<MapDocument>, mut panel: ResMut<Panel>) {
 pub fn draw_sidebar(
     mut contexts: EguiContexts,
     mut panel: ResMut<Panel>,
-    doc: Res<MapDocument>,
+    mut doc: ResMut<MapDocument>,
     picker: Res<Picker>,
     mut select: MessageWriter<SelectHost>,
 ) -> Result {
@@ -304,9 +304,14 @@ pub fn draw_sidebar(
     let selected = picker.selected_id.clone();
     let selection_changed = selected != panel.last_selected;
     panel.last_selected.clone_from(&selected);
+    // Read through `&`: a mutable deref would mark the map changed, and the
+    // graph would rebuild every frame. It only changes when a host is
+    // forgotten, below.
+    let map: &MapDocument = &doc;
     let host = selected
         .as_deref()
-        .and_then(|id| doc.0.as_ref()?.hosts.iter().find(|h| h.id == id));
+        .and_then(|id| map.0.as_ref()?.hosts.iter().find(|h| h.id == id));
+    let mut forget = false;
 
     egui::Area::new(egui::Id::new("sidebar"))
         .anchor(
@@ -335,7 +340,14 @@ pub fn draw_sidebar(
                 if let Some(host) = host {
                     let max_height = (height * DETAILS_MAX_FRACTION)
                         .min(ui.available_height() - GAP - MIN_LIST_HEIGHT);
-                    draw_details(ui, host, max_height, selection_changed, &mut select);
+                    draw_details(
+                        ui,
+                        host,
+                        max_height,
+                        selection_changed,
+                        &mut select,
+                        &mut forget,
+                    );
                 }
                 draw_list(
                     ui,
@@ -347,6 +359,15 @@ pub fn draw_sidebar(
                 );
             });
         });
+    if forget && let Some(id) = selected {
+        if let Some(map) = doc.0.as_mut() {
+            map.forget(&id);
+        }
+        select.write(SelectHost {
+            id: None,
+            fly: false,
+        });
+    }
     Ok(())
 }
 
@@ -554,6 +575,7 @@ fn draw_details(
     max_height: f32,
     selection_changed: bool,
     select: &mut MessageWriter<SelectHost>,
+    forget: &mut bool,
 ) {
     // Padding 10 10 12 and a 1 px border come off the card's own max height.
     let max_height = (max_height - 24.0).max(40.0);
@@ -577,7 +599,7 @@ fn draw_details(
                 scroll = scroll.vertical_scroll_offset(0.0); // `detailsEl.scrollTop = 0`
             }
             scroll.show(ui, |ui| {
-                draw_details_header(ui, host, select);
+                draw_details_header(ui, host, select, forget);
                 ui.add_space(6.0);
                 for (key, value) in &host.fields {
                     if key == "ip" {
@@ -591,7 +613,14 @@ fn draw_details(
 
 /// The card's header (name, "fly to", close) and subtitle (id · role badge).
 /// The close button is "×" because "✕" is not in egui's bundled fonts.
-fn draw_details_header(ui: &mut egui::Ui, host: &Host, select: &mut MessageWriter<SelectHost>) {
+/// The label with, at the right, ×, "fly to" and "forget" (which sets
+/// `forget`: the caller takes the host off the map once the card is drawn).
+fn draw_details_header(
+    ui: &mut egui::Ui,
+    host: &Host,
+    select: &mut MessageWriter<SelectHost>,
+    forget: &mut bool,
+) {
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
         let small = |label: &str| {
             egui::Button::new(text(label, theme::TEXT).size(MONO_PX))
@@ -613,6 +642,13 @@ fn draw_details_header(ui: &mut egui::Ui, host: &Host, select: &mut MessageWrite
                 id: Some(host.id.clone()),
                 fly: true,
             });
+        }
+        if ui
+            .add(small("forget"))
+            .on_hover_text("take this host off the map; a scan may find it again")
+            .clicked()
+        {
+            *forget = true;
         }
         ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.add(egui::Label::new(text(host.display_label(), theme::TEXT).size(16.0)).wrap());

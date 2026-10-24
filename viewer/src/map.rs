@@ -92,8 +92,9 @@ pub struct Link {
     pub rest: Map<String, Value>,
 }
 
-/// What a host is in the map. Unknown roles draw as plain hosts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// What a host is in the map. Unknown roles draw as plain hosts. In order
+/// of precedence: a host two maps call different things is the first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Role {
     Scanner,
     Gateway,
@@ -287,6 +288,84 @@ impl MapDoc {
         fs::write(path, text).map_err(|err| err.to_string())
     }
 
+    /// This map with `fresh`, a newer one, merged in, so a map builds up
+    /// scan by scan instead of each scan starting it over:
+    ///
+    /// - a host in both stays one host, in its place in the list, the newer
+    ///   entry's fields on top ([`Host::absorb`]);
+    /// - hosts only this map knew stay, with their links; hosts only the
+    ///   newer map found are appended, in its order;
+    /// - the newer map's link into a host replaces the old one (the newer
+    ///   scan knows how it reached the host), except into a host whose
+    ///   traced path the newer scan did not repeat: that keeps path and link;
+    /// - positions are laid out afresh for the whole map; `scan`,
+    ///   `generated_at` and `revision` are the newer map's.
+    pub fn merged_with(&self, fresh: MapDoc) -> MapDoc {
+        let MapDoc {
+            revision,
+            generated_at,
+            scan,
+            hosts: fresh_hosts,
+            links: fresh_links,
+            ..
+        } = fresh;
+        let mut hosts = self.hosts.clone();
+        let index: HashMap<String, usize> = hosts
+            .iter()
+            .enumerate()
+            .map(|(i, host)| (host.id.clone(), i))
+            .collect();
+        // The hosts that keep their old traced path, and so their old link.
+        let mut keep_link: HashSet<String> = HashSet::new();
+        for host in fresh_hosts {
+            match index.get(&host.id) {
+                Some(&i) => {
+                    if hosts[i].has_path() && !host.has_path() {
+                        keep_link.insert(host.id.clone());
+                    }
+                    hosts[i].absorb(host);
+                }
+                None => hosts.push(host),
+            }
+        }
+        let replaced: HashSet<String> = fresh_links
+            .iter()
+            .filter(|link| !keep_link.contains(&link.target))
+            .map(|link| link.target.clone())
+            .collect();
+        let mut links: Vec<Link> = self
+            .links
+            .iter()
+            .filter(|link| !replaced.contains(&link.target))
+            .cloned()
+            .collect();
+        links.extend(
+            fresh_links
+                .into_iter()
+                .filter(|link| replaced.contains(&link.target)),
+        );
+        let positions = layout::star_ring(&hosts, &links);
+        for (host, position) in hosts.iter_mut().zip(positions) {
+            host.position = Some(position);
+        }
+        MapDoc {
+            version: CONTRACT_VERSION,
+            revision,
+            generated_at,
+            scan,
+            hosts,
+            links,
+        }
+    }
+
+    /// Take a host off the map, with every link that touched it. The other
+    /// hosts stay where they are.
+    pub fn forget(&mut self, id: &str) {
+        self.hosts.retain(|host| host.id != id);
+        self.links
+            .retain(|link| link.source != id && link.target != id);
+    }
+
     /// One line for the HUD / window title:
     /// `ping_sweep 192.168.1.0/24 · sweeping… · 12 hosts · 11 links · rev 3`.
     pub fn summary(&self) -> String {
@@ -390,6 +469,88 @@ impl Host {
             position: None,
         }
     }
+}
+
+impl Host {
+    /// Whether a traced path reached this host (`extra.path`).
+    fn has_path(&self) -> bool {
+        self.fields
+            .get("extra")
+            .and_then(|extra| extra.get("path"))
+            .is_some_and(|path| !path.is_null())
+    }
+
+    /// Put a newer entry for the same host on top of this one. A field the
+    /// newer scan got overrides; one it did not (`null`, empty) keeps the
+    /// old value. `open_ports` is the union, the newer entry of a port
+    /// winning (its state may have changed). `extra` merges key by key,
+    /// except that `status` and `note` are the newer scan's word alone: a
+    /// host it lists is up unless it says down. The role is the higher of
+    /// the two, and the label follows the merged fields.
+    fn absorb(&mut self, newer: Host) {
+        let newer_role = newer.role();
+        let Host { fields, label, .. } = newer;
+        for (key, value) in fields {
+            let Some(old) = self.fields.get_mut(&key) else {
+                self.fields.insert(key, value);
+                continue;
+            };
+            match (key.as_str(), old, value) {
+                ("open_ports", Value::Array(old), Value::Array(new)) => merge_ports(old, new),
+                ("extra", Value::Object(old), Value::Object(new)) => {
+                    old.remove("status");
+                    old.remove("note");
+                    old.extend(new);
+                }
+                (_, old, new) => {
+                    if !is_blank(&new) {
+                        *old = new;
+                    }
+                }
+            }
+        }
+        if newer_role < self.role() {
+            self.role = Some(newer_role.name().to_string());
+        }
+        if let Some(label) = label_of(&self.fields) {
+            self.label = Some(label);
+        } else if label.is_some() {
+            self.label = label;
+        }
+    }
+}
+
+/// A value a scan did not get: nothing to put over an older one.
+fn is_blank(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::String(text) => text.is_empty(),
+        Value::Array(items) => items.is_empty(),
+        Value::Object(fields) => fields.is_empty(),
+        Value::Bool(_) | Value::Number(_) => false,
+    }
+}
+
+/// Add `new` ports to `old`; a port is its number and protocol, and of two
+/// entries for one port the new one stays.
+fn merge_ports(old: &mut Vec<Value>, new: Vec<Value>) {
+    for port in new {
+        let same = |p: &Value| {
+            p.get("number") == port.get("number") && p.get("proto") == port.get("proto")
+        };
+        match old.iter_mut().find(|p| same(p)) {
+            Some(slot) => *slot = port,
+            None => old.push(port),
+        }
+    }
+}
+
+/// The label the fields give (the scanner's rule: hostname, else vendor,
+/// else address), when they still read as a scanner host.
+fn label_of(fields: &Map<String, Value>) -> Option<String> {
+    serde_json::from_value::<scanner::Host>(Value::Object(fields.clone()))
+        .ok()
+        .map(|host| host.label())
 }
 
 /// `time` as `2026-10-21T04:33:06+00:00`, in UTC, the way Python's
@@ -967,6 +1128,159 @@ mod tests {
             doc.summary(),
             "ping_sweep 10.0.0.0/24 · done · 1 hosts · 0 links · rev 0"
         );
+    }
+
+    /// A map, and a later scan of another network: the NAS answered with a
+    /// new MAC and other ports, no name; the gateway got its role;
+    /// 203.0.113.9 was reached without a trace this time, and .10 is new.
+    fn old_and_newer() -> (MapDoc, MapDoc) {
+        let old = MapDoc::from_json(
+            r#"{"revision": 3, "scan": {"type": "arp_sweep", "network": "10.0.0.0/24"},
+                "hosts": [
+                  {"id": "10.0.0.1", "role": "scanner", "ip": "10.0.0.1"},
+                  {"id": "10.0.0.2", "role": "host", "ip": "10.0.0.2", "hostname": "nas.lan",
+                   "mac": "aa:bb:cc:dd:ee:01",
+                   "open_ports": [{"number": 22, "proto": "tcp"},
+                                  {"number": 53, "proto": "udp", "state": "open|filtered"}],
+                   "extra": {"status": "down", "note": "did not answer ping", "kept": 1}},
+                  {"id": "10.0.0.3", "role": "host", "ip": "10.0.0.3"},
+                  {"id": "10.0.0.254", "role": "host", "ip": "10.0.0.254", "is_local": true},
+                  {"id": "203.0.113.9", "role": "host", "ip": "203.0.113.9", "is_local": false,
+                   "extra": {"path": ["10.0.0.254", "198.51.100.1"], "latency_ms": 12.5}},
+                  {"id": "198.51.100.1", "role": "router", "ip": "198.51.100.1"}],
+                "links": [
+                  {"source": "10.0.0.1", "target": "10.0.0.2", "kind": "subnet"},
+                  {"source": "10.0.0.1", "target": "10.0.0.3", "kind": "subnet"},
+                  {"source": "10.0.0.1", "target": "10.0.0.254", "kind": "subnet"},
+                  {"source": "10.0.0.254", "target": "198.51.100.1", "kind": "route"},
+                  {"source": "198.51.100.1", "target": "203.0.113.9", "kind": "route"}]}"#,
+        )
+        .unwrap();
+        let fresh = MapDoc::from_json(
+            r#"{"revision": 5, "scan": {"type": "ping_sweep", "network": "203.0.113.0/24"},
+                "hosts": [
+                  {"id": "10.0.0.1", "role": "scanner", "ip": "10.0.0.1"},
+                  {"id": "10.0.0.2", "role": "host", "ip": "10.0.0.2", "hostname": null,
+                   "mac": "aa:bb:cc:dd:ee:02", "vendor": "",
+                   "open_ports": [{"number": 53, "proto": "udp", "state": "open"},
+                                  {"number": 80, "proto": "tcp"}],
+                   "extra": {"fresh": 2}},
+                  {"id": "10.0.0.254", "role": "gateway", "ip": "10.0.0.254", "is_local": true},
+                  {"id": "203.0.113.9", "role": "host", "ip": "203.0.113.9", "is_local": false,
+                   "extra": {}},
+                  {"id": "203.0.113.10", "role": "host", "ip": "203.0.113.10", "is_local": false}],
+                "links": [
+                  {"source": "10.0.0.1", "target": "10.0.0.2", "kind": "subnet"},
+                  {"source": "10.0.0.1", "target": "10.0.0.254", "kind": "subnet"},
+                  {"source": "10.0.0.254", "target": "203.0.113.9", "kind": "route"},
+                  {"source": "10.0.0.254", "target": "203.0.113.10", "kind": "route"}]}"#,
+        )
+        .unwrap();
+        (old, fresh)
+    }
+
+    #[test]
+    fn a_newer_map_merges_in_without_losing_what_was_there() {
+        let (old, fresh) = old_and_newer();
+        let merged = old.merged_with(fresh);
+
+        let ids: Vec<&str> = merged.hosts.iter().map(|h| h.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "10.0.0.1",
+                "10.0.0.2",
+                "10.0.0.3",
+                "10.0.0.254",
+                "203.0.113.9",
+                "198.51.100.1",
+                "203.0.113.10"
+            ]
+        );
+        let nas = &merged.hosts[1];
+        assert_eq!(nas.fields["hostname"], "nas.lan", "null does not override");
+        assert_eq!(
+            nas.fields["mac"], "aa:bb:cc:dd:ee:02",
+            "a value the scan got does"
+        );
+        let ports: Vec<(u64, &str, Option<&str>)> = nas.fields["open_ports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                (
+                    p["number"].as_u64().unwrap(),
+                    p["proto"].as_str().unwrap(),
+                    p["state"].as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            ports,
+            [
+                (22, "tcp", None),
+                (53, "udp", Some("open")),
+                (80, "tcp", None)
+            ]
+        );
+        assert_eq!(nas.status(), Status::Up, "this scan did not say down");
+        assert!(nas.fields["extra"].get("note").is_none());
+        assert_eq!(nas.fields["extra"]["kept"], 1);
+        assert_eq!(nas.fields["extra"]["fresh"], 2);
+        assert_eq!(nas.label.as_deref(), Some("nas.lan"));
+        assert_eq!(
+            merged.hosts[3].role(),
+            Role::Gateway,
+            "the higher role wins"
+        );
+        assert_eq!(
+            merged.hosts[4].fields["extra"]["path"][1], "198.51.100.1",
+            "the traced path stays"
+        );
+    }
+
+    #[test]
+    fn merged_links_follow_the_newer_scan_except_along_a_kept_trace() {
+        let (old, fresh) = old_and_newer();
+        let merged = old.merged_with(fresh);
+        let links: Vec<(&str, &str)> = merged
+            .links
+            .iter()
+            .map(|l| (l.source.as_str(), l.target.as_str()))
+            .collect();
+        assert_eq!(
+            links,
+            [
+                ("10.0.0.1", "10.0.0.3"),        // a host only the old map knew
+                ("10.0.0.254", "198.51.100.1"),  // the traced way, routers and all,
+                ("198.51.100.1", "203.0.113.9"), // not this scan's guess
+                ("10.0.0.1", "10.0.0.2"),        // the newer links into the rest
+                ("10.0.0.1", "10.0.0.254"),
+                ("10.0.0.254", "203.0.113.10"),
+            ]
+        );
+        assert!(merged.hosts.iter().all(|h| h.position.is_some()));
+        assert_eq!(merged.revision, 5);
+        assert_eq!(merged.scan.network.as_deref(), Some("203.0.113.0/24"));
+    }
+
+    #[test]
+    fn forgetting_a_host_takes_its_links_and_leaves_the_rest_in_place() {
+        let mut doc = MapDoc::from_json(include_str!("../tests/fixtures/demo.json")).unwrap();
+        let before = doc.hosts.len();
+        let gone = doc.hosts[5].id.clone();
+        let kept = doc.hosts[6].clone();
+        doc.forget(&gone);
+        assert_eq!(doc.hosts.len(), before - 1);
+        assert!(doc.hosts.iter().all(|h| h.id != gone));
+        assert!(
+            doc.links
+                .iter()
+                .all(|l| l.source != gone && l.target != gone)
+        );
+        assert!(!doc.links.is_empty());
+        let same = doc.hosts.iter().find(|h| h.id == kept.id).unwrap();
+        assert_eq!(same.position, kept.position);
     }
 
     #[test]

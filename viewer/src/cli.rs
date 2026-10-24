@@ -26,7 +26,8 @@ const MAX_SWEEP_ADDRESSES: u64 = 65_536;
         netvisualizer --scan                          scan the subnet of the default interface\n  \
         netvisualizer --scan 10.0.0.0/24 --ports      another network, then common TCP ports\n  \
         netvisualizer --scan --no-window --save s.json   scan without a window, keep the map\n  \
-        netvisualizer --json s.json                   show a saved map"
+        netvisualizer --json s.json                   show a saved map\n  \
+        netvisualizer --json s.json --scan 10.0.0.0/24   scan more on top of a saved map"
 )]
 // The doc comments below are `--help` text, printed as they are, so no
 // markdown backticks in them.
@@ -110,8 +111,8 @@ pub struct Args {
     #[arg(short, long, help_heading = "Output")]
     pub verbose: bool,
 
-    /// Draw a map saved with --save instead of scanning.
-    #[arg(long, value_name = "FILE", conflicts_with = "scan")]
+    /// Draw a map saved with --save; with --scan, the scan adds to it.
+    #[arg(long, value_name = "FILE")]
     pub json: Option<PathBuf>,
 
     /// Render N frames, then quit with status 0 (smoke test).
@@ -308,7 +309,6 @@ mod tests {
             &["--scan", "--concurrency", "0"],
             &["--scan", "--concurrency", "70000"],
             &["--no-window"],
-            &["--scan", "--json", "x.json"],
             &["--list-interfaces", "--scan"],
             &["--scan", "--timeout", "0"],
             &["--scan", "--ports", "http"],

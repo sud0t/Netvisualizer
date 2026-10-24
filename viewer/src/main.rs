@@ -76,24 +76,6 @@ fn main() -> ExitCode {
         return cli::list_interfaces();
     }
     let scan = args.scan_settings();
-    if let Some(settings) = &scan {
-        // Find out where we are before any window opens: a mistyped
-        // interface should be an error message, not an empty map.
-        let plan = match ScanPlan::new(settings) {
-            Ok(plan) => plan,
-            Err(err) => {
-                eprintln!("netvisualizer: {err}");
-                return ExitCode::from(2);
-            }
-        };
-        if args.no_window {
-            if args.verbose {
-                println!("{}", python::describe());
-            }
-            return scan::run_headless(plan);
-        }
-    }
-
     let mut status = Status::default();
     let mut doc = None;
     if let Some(path) = args.json.as_deref() {
@@ -116,6 +98,24 @@ fn main() -> ExitCode {
         }
     } else if scan.is_some() {
         status = Status::message("starting the scan…");
+    }
+
+    if let Some(settings) = &scan {
+        // Find out where we are before any window opens: a mistyped
+        // interface should be an error message, not an empty map.
+        let plan = match ScanPlan::new(settings) {
+            Ok(plan) => plan,
+            Err(err) => {
+                eprintln!("netvisualizer: {err}");
+                return ExitCode::from(2);
+            }
+        };
+        if args.no_window {
+            if args.verbose {
+                println!("{}", python::describe());
+            }
+            return scan::run_headless(plan, doc);
+        }
     }
 
     let mut app = viewer(args.verbose);

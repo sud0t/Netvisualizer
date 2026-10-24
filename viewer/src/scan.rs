@@ -175,8 +175,11 @@ pub enum ScanEvent {
 
 /// Start a scan on its own thread. The thread ends after sending
 /// [`ScanEvent::Finished`] or [`ScanEvent::Cancelled`], or as soon as
-/// nobody listens any more. Notifying the handle cancels the scan.
-pub fn spawn(plan: ScanPlan) -> (Receiver<ScanEvent>, Arc<Notify>) {
+/// nobody listens any more. Notifying the handle cancels the scan. `base`
+/// is the map that is there: every map the scan sends is that map with
+/// what the scan has found merged in ([`MapDoc::merged_with`]), so nothing
+/// leaves the map but by the user's hand.
+pub fn spawn(plan: ScanPlan, base: Option<MapDoc>) -> (Receiver<ScanEvent>, Arc<Notify>) {
     let (tx, rx) = mpsc::channel();
     let cancel = Arc::new(Notify::new());
     let stop = Arc::clone(&cancel);
@@ -193,7 +196,7 @@ pub fn spawn(plan: ScanPlan) -> (Receiver<ScanEvent>, Arc<Notify>) {
                 // flight, its socket included, goes with it.
                 Ok(runtime) => runtime.block_on(async {
                     tokio::select! {
-                        result = run(&plan, &tx) => Some(result),
+                        result = run(&plan, base, &tx) => Some(result),
                         () = stop.notified() => None,
                     }
                 }),
@@ -211,9 +214,9 @@ pub fn spawn(plan: ScanPlan) -> (Receiver<ScanEvent>, Arc<Notify>) {
 
 /// The stages, in order (see the module comment).
 #[allow(clippy::too_many_lines)] // one stage after another; Milestone 12 breaks it into jobs
-async fn run(plan: &ScanPlan, tx: &Sender<ScanEvent>) -> Result<(), String> {
+async fn run(plan: &ScanPlan, base: Option<MapDoc>, tx: &Sender<ScanEvent>) -> Result<(), String> {
     let settings = &plan.settings;
-    let mut report = Reporter::new(plan, tx);
+    let mut report = Reporter::new(plan, base, tx);
 
     // ARP for the part of the network on our own link, when it is allowed
     // and possible; ping for the rest, or for everything otherwise.
@@ -483,6 +486,10 @@ fn keep_gateway(
 struct Reporter<'a> {
     plan: &'a ScanPlan,
     tx: &'a Sender<ScanEvent>,
+    /// The map that was there when the scan started; every map sent is it
+    /// plus what the scan found, and the revision counts on from its.
+    base: Option<MapDoc>,
+    /// Maps sent so far.
     revision: u64,
     /// The maps' `scan.type`: which sweep finds the hosts.
     kind: &'static str,
@@ -491,17 +498,19 @@ struct Reporter<'a> {
 }
 
 impl<'a> Reporter<'a> {
-    fn new(plan: &'a ScanPlan, tx: &'a Sender<ScanEvent>) -> Self {
+    fn new(plan: &'a ScanPlan, base: Option<MapDoc>, tx: &'a Sender<ScanEvent>) -> Self {
         Reporter {
             plan,
             tx,
+            base,
             revision: 0,
             kind: "ping_sweep",
             paths: Vec::new(),
         }
     }
 
-    /// Send the map of `hosts`, with `stage` for the HUD; returns it too.
+    /// Send the map of `hosts` on top of the base, with `stage` for the
+    /// HUD; returns it too.
     fn map(&mut self, hosts: &[scanner::Host], stage: &str) -> MapDoc {
         self.revision += 1;
         let scan = Scan {
@@ -517,7 +526,11 @@ impl<'a> Reporter<'a> {
             &self.paths,
             scan,
         );
-        doc.revision = self.revision;
+        doc.revision = self.revision + self.base.as_ref().map_or(0, |base| base.revision);
+        let doc = match &self.base {
+            Some(base) => base.merged_with(doc),
+            None => doc,
+        };
         let _ = self.tx.send(ScanEvent::Map(Box::new(doc.clone())));
         doc
     }
@@ -591,6 +604,7 @@ impl ScanJob {
 fn start_scan(
     mut requests: MessageReader<StartScan>,
     settings: Res<ScanSettings>,
+    doc: Res<MapDocument>,
     job: Option<Res<ScanJob>>,
     mut status: ResMut<Status>,
     mut commands: Commands,
@@ -605,7 +619,7 @@ fn start_scan(
     match ScanPlan::new(&settings) {
         Ok(plan) => {
             info!("{}", plan.describe());
-            let (events, cancel) = spawn(plan);
+            let (events, cancel) = spawn(plan, doc.0.clone());
             commands.insert_resource(ScanJob::new(events, cancel));
         }
         Err(err) => {
@@ -615,9 +629,10 @@ fn start_scan(
     }
 }
 
-/// Hand what the scan reported to the rest of the viewer. A new map makes
-/// graph.rs rebuild, the panel re-sort and scene.rs re-frame (while the user
-/// has not moved the camera); the selection survives, being kept by host id.
+/// Hand what the scan reported to the rest of the viewer. A new map (the
+/// one that was there plus what the scan found so far) makes graph.rs
+/// rebuild, the panel re-sort and scene.rs re-frame (while the user has not
+/// moved the camera); the selection survives, being kept by host id.
 fn receive(
     job: Option<ResMut<ScanJob>>,
     mut doc: ResMut<MapDocument>,
@@ -675,15 +690,16 @@ fn receive(
 // Without a window.
 // ---------------------------------------------------------------------------
 
-/// `--no-window`: run the scan here and print what it reports, then the hosts.
-pub fn run_headless(plan: ScanPlan) -> ExitCode {
+/// `--no-window`: run the scan here (on top of `base`, a map `--json`
+/// loaded) and print what it reports, then the hosts.
+pub fn run_headless(plan: ScanPlan, base: Option<MapDoc>) -> ExitCode {
     println!("{}", plan.describe());
     let started = Instant::now();
     let mut stage = String::new();
     let mut last_progress = Instant::now();
     let mut last_map = None;
     let mut finished = false;
-    let (events, _cancel) = spawn(plan); // nothing cancels a headless scan but Ctrl-C
+    let (events, _cancel) = spawn(plan, base); // nothing cancels a headless scan but Ctrl-C
     for event in events {
         match event {
             ScanEvent::Map(map) => {
@@ -810,7 +826,7 @@ mod tests {
     }
 
     fn all_events(plan: ScanPlan) -> Vec<ScanEvent> {
-        spawn(plan).0.into_iter().collect()
+        spawn(plan, None).0.into_iter().collect()
     }
 
     /// A scan that would wait 5 s for silence is cut short by a cancel.
@@ -819,7 +835,7 @@ mod tests {
         let mut plan = documentation_plan("192.0.2.0/28");
         plan.settings.timeout = Duration::from_secs(5);
         let started = Instant::now();
-        let (events, cancel) = spawn(plan);
+        let (events, cancel) = spawn(plan, None);
         thread::sleep(Duration::from_millis(200));
         cancel.notify_one();
         let events: Vec<ScanEvent> = events.into_iter().collect();
@@ -931,6 +947,44 @@ mod tests {
                 gateway: Some(Ipv4Addr::new(192, 0, 2, 1)),
             },
         }
+    }
+
+    /// A scan on top of a map keeps that map's hosts and fills in its own:
+    /// the gateway, a plain host before, gets its role and this scan's
+    /// status, and keeps the name the old map had for it.
+    #[test]
+    fn a_scan_merges_into_the_map_that_is_there() {
+        let base = MapDoc::from_json(
+            r#"{"revision": 5, "scan": {"type": "arp_sweep", "network": "10.0.0.0/24"},
+                "hosts": [{"id": "192.0.2.10", "role": "scanner", "ip": "192.0.2.10", "hostname": "me.lan"},
+                          {"id": "10.0.0.9", "role": "host", "ip": "10.0.0.9", "mac": "aa:bb:cc:dd:ee:ff"},
+                          {"id": "192.0.2.1", "role": "host", "ip": "192.0.2.1", "hostname": "gw.lan"}],
+                "links": [{"source": "192.0.2.10", "target": "10.0.0.9", "kind": "subnet"}]}"#,
+        )
+        .unwrap();
+        let plan = documentation_plan("192.0.2.0/30");
+        let events: Vec<ScanEvent> = spawn(plan, Some(base)).0.into_iter().collect();
+        let map = maps(&events).last().copied().unwrap();
+        let ids: Vec<&str> = map.hosts.iter().map(|h| h.id.as_str()).collect();
+        assert_eq!(ids, ["192.0.2.10", "10.0.0.9", "192.0.2.1"]);
+        assert_eq!(map.hosts[0].fields["hostname"], "me.lan");
+        assert_eq!(map.hosts[1].fields["mac"], "aa:bb:cc:dd:ee:ff");
+        let gateway = &map.hosts[2];
+        assert_eq!(gateway.role(), crate::map::Role::Gateway);
+        assert_eq!(gateway.label.as_deref(), Some("gw.lan"));
+        assert_eq!(gateway.status(), HostStatus::Down);
+        let links: Vec<(&str, &str)> = map
+            .links
+            .iter()
+            .map(|l| (l.source.as_str(), l.target.as_str()))
+            .collect();
+        assert_eq!(
+            links,
+            [("192.0.2.10", "10.0.0.9"), ("192.0.2.10", "192.0.2.1")]
+        );
+        assert_eq!(map.revision, 5 + 2);
+        assert_eq!(map.scan.network.as_deref(), Some("192.0.2.0/30"));
+        assert!(map.hosts.iter().all(|h| h.position.is_some()));
     }
 
     #[test]
@@ -1148,7 +1202,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_from_the_scan_replace_the_document_and_the_job_ends_with_the_scan() {
+    fn maps_from_the_scan_become_the_document_and_the_job_ends_with_the_scan() {
         let mut app = app();
         let (tx, rx) = mpsc::channel();
         app.insert_resource(ScanJob::new(rx, Arc::new(Notify::new())));

@@ -4,7 +4,9 @@
 //!
 //! The card only edits the [`ScanSettings`] resource and sends the same
 //! [`StartScan`] message `--scan` does; scan.rs does the rest. Cancel pokes
-//! the scan thread's `Notify`, which scan.rs selects on.
+//! the scan thread's `Notify`, which scan.rs selects on. Clear empties the
+//! map: a scan adds to the map that is there, and nothing else takes a
+//! host off it.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -15,10 +17,12 @@ use scanner::local;
 use scanner::ports::{COMMON_TCP_PORTS, COMMON_UDP_PORTS, parse_port_list};
 
 use crate::cli::{parse_network, parse_seconds};
+use crate::graph::MapDocument;
 use crate::panel::card;
+use crate::picking::SelectHost;
 use crate::scan::{ScanJob, ScanSettings, StartScan};
 use crate::theme;
-use crate::ui::{EDGE, mono, text};
+use crate::ui::{EDGE, Status, mono, text};
 
 /// The card's fields, as typed; [`ScanForm::settings`] reads them.
 #[derive(Resource, Debug, Clone, PartialEq, Eq)]
@@ -164,12 +168,16 @@ fn seed_form(settings: Res<ScanSettings>, mut form: ResMut<ScanForm>) {
 }
 
 /// Draw the card, right under the HUD (an egui pass system; ui.rs orders it).
+#[allow(clippy::too_many_arguments)] // a Bevy system lists what it reads
 pub fn draw_scan_card(
     mut contexts: EguiContexts,
     mut form: ResMut<ScanForm>,
     mut settings: ResMut<ScanSettings>,
     job: Option<Res<ScanJob>>,
     mut start: MessageWriter<StartScan>,
+    mut doc: ResMut<MapDocument>,
+    mut status: ResMut<Status>,
+    mut select: MessageWriter<SelectHost>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     // egui remembers the HUD's rectangle from the last frame.
@@ -185,7 +193,15 @@ pub fn draw_scan_card(
                     ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
                     match &job {
                         Some(job) => draw_running(ui, job),
-                        None => draw_idle(ui, &mut form, &mut settings, &mut start),
+                        None => draw_idle(
+                            ui,
+                            &mut form,
+                            &mut settings,
+                            &mut start,
+                            &mut doc,
+                            &mut status,
+                            &mut select,
+                        ),
                     }
                 });
         });
@@ -218,12 +234,16 @@ fn draw_running(ui: &mut egui::Ui, job: &ScanJob) {
     );
 }
 
-/// Idle: the Scan button, the network box, and the options when opened.
+/// Idle: the Scan button, the network box, the options when opened, and
+/// Clear while there is a map to clear.
 fn draw_idle(
     ui: &mut egui::Ui,
     form: &mut ScanForm,
     settings: &mut ScanSettings,
     start: &mut MessageWriter<StartScan>,
+    doc: &mut MapDocument,
+    status: &mut Status,
+    select: &mut MessageWriter<SelectHost>,
 ) {
     ui.horizontal(|ui| {
         let scan = egui::Button::new(text("Scan", theme::TEXT).strong());
@@ -253,6 +273,20 @@ fn draw_idle(
             .clicked()
         {
             form.open = !form.open;
+        }
+        let has_map = doc.0.as_ref().is_some_and(|map| !map.hosts.is_empty());
+        let clear = egui::Button::new(text("Clear", theme::MUTED)).frame(false);
+        if ui
+            .add_enabled(has_map, clear)
+            .on_hover_text("forget every host; the next scan starts a map afresh")
+            .clicked()
+        {
+            doc.0 = None;
+            status.show_message("map cleared");
+            select.write(SelectHost {
+                id: None,
+                fly: false,
+            });
         }
     });
     if let Some(err) = &form.error {
