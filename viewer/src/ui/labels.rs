@@ -328,9 +328,8 @@ mod tests {
             (full.red, full.green, full.blue)
         );
         assert!((faded.alpha - full.alpha * 0.5).abs() < 1e-6);
-        // (The selection colour is linear white; the sRGB round trip is not exact.)
-        let white = fade(theme::SELECTION, 1.0).to_srgba();
-        assert!(white.red > 0.999 && (white.alpha - 1.0).abs() < 1e-6);
+        let lit = fade(theme::SELECTION, 1.0).to_srgba();
+        assert!(lit.green > 0.99 && (lit.alpha - 1.0).abs() < 1e-6);
         assert!(fade(theme::SELECTION, 0.0).to_srgba().alpha.abs() < 1e-6);
     }
 }

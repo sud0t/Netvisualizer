@@ -166,7 +166,11 @@ stay as they were so the table, the legend and the spheres agree.
 | `ACCENT_GLOW` / `PANEL_GLOW_COLOR` | phosphor 18 % / 4 % | Glows (toggle under the pointer, Scan; panels). Kept faint on purpose: Kyler asked for the bloom toned down. |
 | `STOP_FILL` / `STOP_FILL_HOVER` / `STOP_GLOW` | red 12 % / 22 % / 18 % | Scan while running |
 | `BACKDROP` | black 60 % | Behind the help card |
-| `ROLE_SCANNER` cyan `#22d3ee`, `ROLE_GATEWAY` amber `#f59e0b`, `ROLE_ROUTER` violet `#c084fc`, `ROLE_HOST` blue `#60a5fa`, `ROLE_DOWN` grey | unchanged | Roles |
+| `ROLE_SCANNER` cyan `#22d3ee`, `ROLE_GATEWAY` amber `#f59e0b`, `ROLE_ROUTER` violet `#c084fc`, `ROLE_HOST` blue `#60a5fa` | unchanged | Roles; `ROLE_DOWN` is a dull green-grey `#5b6f63` |
+| `SCENE_BG` | `#040705` | The clear colour, the planet's surface under the sky, the fog |
+| `GRID_LINE` / `GRID_AXIS` | `#0f3d24` / `#1c7a46` at `GRID_OPACITY` 0.6 | The grid floor |
+| `LINK` | `#2f945a` at `LINK_OPACITY` 0.55 | Links between hosts |
+| `SELECTION` | phosphor | The ring round the selected sphere |
 
 Sizes: `EDGE` 10 (panels from the window edges), all radii 0,
 `PANEL_GLOW` 8 px, `CHIP_GLOW` 4 px, `CHIP_PAD_X` 8 px,
