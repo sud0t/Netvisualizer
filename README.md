@@ -53,11 +53,17 @@ netvisualizer --list-interfaces                 # which networks this machine is
 netvisualizer --help                            # everything else
 ```
 
-Nothing touches the network without `--scan` or the Scan button in the
-window's top-left card, which takes the same options (open "options") and
-turns into the stage, a progress bar and Cancel while a scan runs. The window
-opens straight away and the map redraws as each stage of the scan finishes;
-closing the window ends the program. To try it without scanning, show the
+Nothing touches the network without `--scan` or the `[ SCAN ]` block at the
+bottom of the window. The interface is a terminal's: one monospace face,
+phosphor green on near-black boxes. The scan's features (ARP, traceroute,
+names, TCP ports, UDP ports) are the `[x]` toggles in the row above the
+block, the network (`net>`) and the interface (`if>`) sit beside it, and
+`opts` opens the timeout, the probes at once and the port lists; while a
+scan runs the block reads `[ STOP ]` and the stage and its progress are
+written beside it. The hosts are a table down the right edge, the selected
+one a key-value dump under it. The window opens straight away and the map
+redraws as each stage of the scan finishes; closing the window ends the
+program. To try it without scanning, show the
 saved fake LAN: `netvisualizer --json viewer/tests/fixtures/demo.json`.
 
 A host or port that stays silent is asked once more before it is given up

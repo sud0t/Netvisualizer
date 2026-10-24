@@ -134,6 +134,17 @@ pub struct Args {
     /// Open the help overlay, as `?` would.
     #[arg(long, help_heading = "Debugging")]
     pub help_overlay: bool,
+
+    /// Hide the interface: the map alone (for pictures of it).
+    #[arg(long, help_heading = "Debugging")]
+    pub no_ui: bool,
+
+    /// Drive the window as a user would, for pictures of it in use. Steps
+    /// separated by ";": "wait SECONDS", "move X Y", "click X Y",
+    /// "scroll LINES", "key NAME" (Escape, Enter, Backspace, or one
+    /// character), "text WORDS", "shot FILE" (a PNG of the window).
+    #[arg(long, value_name = "STEPS", value_parser = crate::startup::parse_script, help_heading = "Debugging")]
+    pub script: Option<crate::startup::Script>,
 }
 
 impl Args {

@@ -43,6 +43,9 @@ cast_sign_loss = "allow"
 cast_possible_wrap = "allow"
 # ScanSettings is one flag per command-line switch.
 struct_excessive_bools = "allow"
+# A Bevy query is its own type: the With/Without clauses that keep two
+# queries apart are how a system says what it reads, not a type to name.
+type_complexity = "allow"
 # Written for a published library's users; nobody builds on these crates
 # (publish = false), and every fallible function says in prose what fails.
 must_use_candidate = "allow"

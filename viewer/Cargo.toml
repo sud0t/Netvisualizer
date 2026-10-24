@@ -12,14 +12,7 @@ workspace = true
 
 [dependencies]
 # Versions checked on crates.io 2026-10-20.
-# bevy_egui must be the release built for this exact Bevy minor; bump them together.
 bevy = { version = "0.20.0", features = ["wayland", "png"] }
-# The egui release built for Bevy 0.20 (compatibility table in bevy_egui's README).
-# `render` draws egui over the Bevy frame; `default_fonts` ships the fonts the
-# labels and sidebar use; `manage_clipboard` lets the filter box paste. The
-# default `open_url` (a browser launcher) and `picking` (bevy_picking bridge)
-# are left out: nothing here needs them.
-bevy_egui = { version = "0.43.1", default-features = false, features = ["render", "default_fonts", "manage_clipboard"] }
 serde.workspace = true
 serde_json.workspace = true
 clap = { version = "4.6", features = ["derive"] }
@@ -35,6 +28,15 @@ tokio = { workspace = true, features = ["rt"] }
 # libpython named in .cargo/config.toml: a Python upgrade means a rebuild.
 # `auto-initialize` starts the interpreter on first use.
 pyo3 = { workspace = true, features = ["auto-initialize"] }
+# The UI layer (ui/): a retained layout engine over plain Bevy entities. Its
+# Bevy 0.20 release (0.8.0) is not on crates.io yet, so this is its main
+# branch at that version's commit; move to the crates.io release when it
+# comes, and bump it with Bevy. `text3d` (3D text) is left out: the UI is 2D.
+bevy_lunex = { git = "https://github.com/bytestring-net/bevy_lunex", rev = "15fdc857d938a7aba138f07424a98890245e9779", version = "0.8.0", default-features = false }
+# The clipboard, for Ctrl+V and Ctrl+C in the text fields (ui/text_input.rs).
+# `wayland-data-control` talks to Wayland compositors directly; X11 works
+# without a feature. Image clipboard support is left out.
+arboard = { version = "3.7.0", default-features = false, features = ["wayland-data-control"] }
 
 [features]
 # `cargo run --features dev` links Bevy as a shared library: rebuilds after a

@@ -34,7 +34,7 @@ pub fn fly_distance(radius: f32) -> f32 {
 
 /// A selection from anywhere but the 3D view: the host list, the details
 /// card's buttons, F and Escape, `--select`. Applied in the Picking set, so a
-/// request written by the egui pass lands next frame.
+/// request written while the UI is drawn lands next frame.
 #[derive(Message, Debug, Clone, PartialEq, Eq)]
 pub struct SelectHost {
     /// The host to select; `None` deselects. An id not in the map deselects too.

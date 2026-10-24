@@ -59,7 +59,7 @@ impl Default for SceneSettings {
     }
 }
 
-/// Pixels per edge hidden under the egui panels.
+/// Pixels per edge hidden under the UI's panels.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Inset {
     pub left: f32,

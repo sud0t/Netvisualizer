@@ -3,15 +3,16 @@
 //!
 //! cli.rs is the command line; startup.rs what the window is started with
 //! (log, GPU probe, smoke test). scan.rs runs a scan (the scanner crate) when
-//! asked and hands the viewer a map after each stage; scanpanel.rs is the
-//! card that starts one; map.rs is the map document (the JSON contract) and
-//! layout.rs places the hosts in it. scene.rs sets up the camera, lights,
-//! fog, floor and framing; graph.rs draws the hosts and links; controls.rs
-//! flies the camera; picking.rs handles hover, clicks and the selection;
-//! panel.rs is the sidebar; ui.rs draws the labels, HUD, legend and help;
-//! theme.rs holds the colours; python.rs is the embedded Python and
-//! vendors.rs the scan stage that runs in it. This file holds the wiring,
-//! and the keys that need everything.
+//! asked and hands the viewer a map after each stage; scanform.rs is the
+//! scan's options as the user sets them; map.rs is the map document (the
+//! JSON contract) and layout.rs places the hosts in it. scene.rs sets up the
+//! camera, lights, fog, floor and framing; graph.rs draws the hosts and
+//! links; controls.rs flies the camera; picking.rs handles hover, clicks and
+//! the selection; panel.rs is the host list's model; ui/ is the interface
+//! over the map (`bevy_lunex`): the scan dock, the HUD, the host rail, the
+//! labels and the help; theme.rs holds the colours and looks; python.rs is
+//! the embedded Python and vendors.rs the scan stage that runs in it. This
+//! file holds the wiring, and the keys that need everything.
 //!
 //!     cargo run --features dev                                      # the window, no scan
 //!     cargo run --features dev -- --scan --ports                    # scan the local subnet, then common ports
@@ -28,7 +29,7 @@ mod panel;
 mod picking;
 mod python;
 mod scan;
-mod scanpanel;
+mod scanform;
 mod scene;
 mod startup;
 mod theme;
@@ -51,10 +52,10 @@ use crate::map::{CONTRACT_VERSION, MapDoc};
 use crate::panel::{Panel, PanelPlugin};
 use crate::picking::{Picker, PickingPlugin, SelectHost};
 use crate::scan::{ScanPlan, ScanPlugin, StartScan};
-use crate::scanpanel::ScanPanelPlugin;
+use crate::scanform::ScanFormPlugin;
 use crate::scene::{ResetView, ScenePlugin};
 use crate::startup::{DebugSelect, SmokeTest};
-use crate::ui::{Help, Status, UiInput, UiPlugin};
+use crate::ui::{Help, Status, UiHidden, UiInput, UiPlugin};
 
 /// The per-frame order of everything in `Update`. Take in what the scan
 /// sent, build the graph, frame it, move the camera, pick under the new
@@ -124,7 +125,9 @@ fn main() -> ExitCode {
         .insert_resource(Help {
             open: args.help_overlay,
         })
+        .insert_resource(UiHidden(args.no_ui))
         .insert_resource(SmokeTest::new(args.exit_after_frames, args.screenshot))
+        .insert_resource(args.script.unwrap_or_default())
         .insert_resource(DebugSelect {
             id: args.select,
             fly: args.fly,
@@ -136,7 +139,9 @@ fn main() -> ExitCode {
         .add_systems(
             Update,
             (update_title, startup::smoke_test).in_set(ViewerSet::Draw),
-        );
+        )
+        // In First, so the frame's input systems see the scripted input.
+        .add_systems(First, startup::run_script);
     if args.verbose {
         app.add_systems(Startup, startup::log_python);
     }
@@ -158,6 +163,8 @@ fn viewer(verbose: bool) -> App {
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "Netvisualizer".into(),
+                    // The window's class (app id), for window-manager rules.
+                    name: Some("netvisualizer".into()),
                     ..default()
                 }),
                 ..default()
@@ -188,7 +195,7 @@ fn viewer(verbose: bool) -> App {
         PanelPlugin,
         UiPlugin,
         ScanPlugin,
-        ScanPanelPlugin,
+        ScanFormPlugin,
     ));
     app
 }
@@ -220,7 +227,7 @@ fn shortcuts(
                     id: None,
                     fly: false,
                 });
-            } // else egui has already taken the focus out of the filter box
+            } // else the field itself leaves the focus (text_input.rs)
             continue;
         }
         let Key::Character(typed) = &event.logical_key else {
@@ -367,7 +374,7 @@ mod tests {
         for c in ["?", "r", "f", "/", "h"] {
             typed(&mut app, c);
         }
-        key(&mut app, Key::Escape); // egui itself leaves the box
+        key(&mut app, Key::Escape); // the field itself leaves the focus
         assert!(!app.world().resource::<Help>().open);
         assert_eq!(selections(&app), []);
         assert_eq!(resets(&app), 0);
